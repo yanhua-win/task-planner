@@ -537,7 +537,7 @@
     <button class="clear-btn" id="clearBtn">清除已完成</button>
   </div>
 
-  <div class="hint">💾 数据自动保存在本地浏览器 · 双击任务标题可编辑 · 左侧颜色条表示重要度（红=高 黄=中 蓝=低）· 📥 退回待办池 · ⏭ 跳过重复任务的这一天</div>
+  <div class="hint">💾 数据自动保存在本地浏览器 · 双击任务标题可编辑 · 左侧颜色条表示重要度（红=高 黄=中 蓝=低）· 📥 退回待办池 · ⏩ 跳过重复任务的这一天</div>
 
   </div><!-- /dayView -->
 
@@ -834,8 +834,10 @@
     } else if (t.kind === 'once') {
       tail = '<button class="act-btn" data-action="to-backlog" title="退回待办池">📥</button>';
     } else {
-      // 重复任务没有单一日期，不能退回待办池，但可以跳过这一天
-      tail = '<button class="act-btn" data-action="skip" title="跳过这一天">⏭</button>';
+      // 重复任务没有单一日期，不能退回待办池，但可以跳过这一天。
+      // 图标必须用 U+23E9（默认彩色 emoji）—— U+23ED 的默认呈现是单色细线，
+      // 配上 .act-btn 的浅灰会几乎看不见。
+      tail = '<button class="act-btn" data-action="skip" title="跳过这一天">⏩</button>';
     }
 
     return '<li class="task ' + priCls + doneCls + '" data-id="' + t.id + '" data-kind="' + t.kind + '">' +

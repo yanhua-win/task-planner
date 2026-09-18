@@ -237,6 +237,7 @@
   .badge.time.overdue { background: #fdecec; color: #dc2626; }
   .badge.cat { color: #fff; }
   .badge.repeat { background: #f0fdf4; color: #16a34a; }
+  .badge.duration { background: #f5f3ff; color: #7c3aed; }
   .badge.repeat::before { content: "↻ "; }
   /* 优先级颜色条与徽章 */
   .task { border-left: 4px solid transparent; }
@@ -504,6 +505,19 @@
     <div class="opts-row">
       <span><label>⏰ 开始</label><input type="time" id="startTimeInput"></span>
       <span><label>结束</label><input type="time" id="endTimeInput"></span>
+      <span><label>⏱ 时长</label>
+        <select id="durationSelect">
+          <option value="0" selected>不设</option>
+          <option value="15">15分钟</option>
+          <option value="30">30分钟</option>
+          <option value="45">45分钟</option>
+          <option value="60">1小时</option>
+          <option value="90">1.5小时</option>
+          <option value="120">2小时</option>
+          <option value="180">3小时</option>
+          <option value="240">4小时</option>
+        </select>
+      </span>
       <span><label>🎯 重要度</label>
         <select id="prioritySelect">
           <option value="high">高</option>
@@ -550,6 +564,19 @@
       <div class="opts-row">
         <span><label>⏰ 开始</label><input type="time" id="bStartTimeInput"></span>
         <span><label>结束</label><input type="time" id="bEndTimeInput"></span>
+        <span><label>⏱ 时长</label>
+          <select id="bDurationSelect">
+            <option value="0" selected>不设</option>
+            <option value="15">15分钟</option>
+            <option value="30">30分钟</option>
+            <option value="45">45分钟</option>
+            <option value="60">1小时</option>
+            <option value="90">1.5小时</option>
+            <option value="120">2小时</option>
+            <option value="180">3小时</option>
+            <option value="240">4小时</option>
+          </select>
+        </span>
         <span><label>🎯 重要度</label>
           <select id="bPrioritySelect">
             <option value="high">高</option>
@@ -668,6 +695,20 @@
     var d = parseDate(str);
     return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 · 周' + WEEKDAYS[d.getDay()];
   }
+  // 给 "HH:MM" 加上分钟数。刻意不跨天 —— 这毕竟是个「每日」任务表，
+  // 22:00 + 4 小时停在 23:59，比显示成第二天的 02:00 更符合直觉。
+  function addMinutes(hhmm, minutes) {
+    var p = hhmm.split(':');
+    var total = (+p[0]) * 60 + (+p[1]) + minutes;
+    if (total > 1439) total = 1439;
+    return pad(Math.floor(total / 60)) + ':' + pad(total % 60);
+  }
+  function formatDuration(min) {
+    if (!min) return '';
+    if (min < 60) return min + '分钟';
+    var h = min / 60;
+    return (h % 1 === 0 ? h : Math.round(h * 10) / 10) + '小时';
+  }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -720,12 +761,12 @@
     var list = [];
     state.tasks.forEach(function (t) {
       // t.date 为 null 的是待办池条目，只认有日期的（显式写成两层，别让后来人改成模糊匹配）
-      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
+      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
     });
     state.rules.forEach(function (r) {
       if (occursOn(r, dateStr)) {
         var key = r.id + '_' + dateStr;
-        list.push({ id: r.id, title: r.title, startTime: r.startTime, endTime: r.endTime, category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
+        list.push({ id: r.id, title: r.title, startTime: r.startTime, endTime: r.endTime, duration: r.duration, category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
       }
     });
     list.sort(compareTasks);
@@ -739,7 +780,7 @@
       .filter(function (t) { return !t.date; })
       .map(function (t) {
         normalizeTask(t);
-        return { id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
+        return { id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
       })
       .sort(function (a, b) {
         var pd = prioRank(a.priority) - prioRank(b.priority);
@@ -819,6 +860,9 @@
     if (t.startTime || t.endTime) {
       var range = (t.startTime || '') + (t.startTime && t.endTime ? ' – ' : '') + (t.endTime || '');
       meta.push('<span class="badge time' + (overdue ? ' overdue' : '') + '">' + escapeHtml(range) + '</span>');
+    }
+    if (t.duration) {
+      meta.push('<span class="badge duration">⏱ ' + escapeHtml(formatDuration(t.duration)) + '</span>');
     }
     meta.push('<span class="badge priority ' + (t.priority || 'medium') + '">' + PRI_LABEL[t.priority || 'medium'] + '</span>');
     if (t.category) {
@@ -1029,6 +1073,9 @@
     var startTime = document.getElementById('startTimeInput').value || null;
     var endTime = document.getElementById('endTimeInput').value || null;
     if (startTime && endTime && endTime < startTime) { var tmp = startTime; startTime = endTime; endTime = tmp; }
+    var duration = parseInt(document.getElementById('durationSelect').value, 10) || 0;
+    // 有开始时间 + 时长但没填结束时间 → 由时长推算（输入框那边会实时同步，这里兜底）
+    if (startTime && !endTime && duration > 0) endTime = addMinutes(startTime, duration);
     var category = document.getElementById('categoryInput').value.trim() || null;
     var priority = document.getElementById('prioritySelect').value || 'medium';
     var repeat = document.getElementById('repeatSelect').value;
@@ -1040,13 +1087,15 @@
     if (repeat === 'none') {
       state.tasks.push({
         id: 't' + (nextId++),
-        title: title, startTime: startTime, endTime: endTime, category: category, priority: priority,
+        title: title, startTime: startTime, endTime: endTime, duration: duration || null,
+        category: category, priority: priority,
         date: currentDate, completed: false, createdAt: Date.now()
       });
     } else {
       state.rules.push({
         id: 'r' + (nextId++),
-        title: title, startTime: startTime, endTime: endTime, category: category, priority: priority,
+        title: title, startTime: startTime, endTime: endTime, duration: duration || null,
+        category: category, priority: priority,
         repeat: repeat, startDate: currentDate, createdAt: Date.now()
       });
     }
@@ -1054,6 +1103,7 @@
     titleInput.value = '';
     document.getElementById('startTimeInput').value = '';
     document.getElementById('endTimeInput').value = '';
+    document.getElementById('durationSelect').value = '0';
     document.getElementById('categoryInput').value = '';
     document.getElementById('repeatSelect').value = 'none';
     document.getElementById('prioritySelect').value = 'medium';
@@ -1089,6 +1139,8 @@
     var startTime = document.getElementById('bStartTimeInput').value || null;
     var endTime = document.getElementById('bEndTimeInput').value || null;
     if (startTime && endTime && endTime < startTime) { var tmp = startTime; startTime = endTime; endTime = tmp; }
+    var duration = parseInt(document.getElementById('bDurationSelect').value, 10) || 0;
+    if (startTime && !endTime && duration > 0) endTime = addMinutes(startTime, duration);
     var category = document.getElementById('bCategoryInput').value.trim() || null;
     var priority = document.getElementById('bPrioritySelect').value || 'medium';
 
@@ -1098,13 +1150,15 @@
 
     state.tasks.push({
       id: 't' + (nextId++),
-      title: title, startTime: startTime, endTime: endTime, category: category, priority: priority,
+      title: title, startTime: startTime, endTime: endTime, duration: duration || null,
+      category: category, priority: priority,
       date: null, completed: false, createdAt: Date.now()
     });
 
     titleInput.value = '';
     document.getElementById('bStartTimeInput').value = '';
     document.getElementById('bEndTimeInput').value = '';
+    document.getElementById('bDurationSelect').value = '0';
     document.getElementById('bCategoryInput').value = '';
     document.getElementById('bPrioritySelect').value = 'medium';
     titleInput.focus();
@@ -1232,6 +1286,18 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && modal.classList.contains('show')) closeRepeatModal();
     });
+  }
+
+  // 时长是输入时的帮手：选了「开始时间 + 时长」就实时把结束时间填出来，
+  // 让用户看得见算出来的结果（落库那次还会在 addTask 里再兜底算一遍）。
+  function bindDurationHelper(startId, endId, durId) {
+    function sync() {
+      var s = document.getElementById(startId).value;
+      var d = parseInt(document.getElementById(durId).value, 10) || 0;
+      if (s && d > 0) document.getElementById(endId).value = addMinutes(s, d);
+    }
+    document.getElementById(startId).addEventListener('change', sync);
+    document.getElementById(durId).addEventListener('change', sync);
   }
 
   function bindDateModal() {
@@ -1485,6 +1551,8 @@
   updateCategoryDatalist();
   bindDateModal();
   bindRepeatModal();
+  bindDurationHelper('startTimeInput', 'endTimeInput', 'durationSelect');
+  bindDurationHelper('bStartTimeInput', 'bEndTimeInput', 'bDurationSelect');
   render();
   bindSyncUI();
   startSync();

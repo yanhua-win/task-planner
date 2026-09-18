@@ -275,9 +275,6 @@
     line-height: 1;
   }
   .act-btn:hover { background: var(--accent-soft); color: var(--accent); }
-  /* 重复任务没有「退回」动作，用占位元素对齐卡片右侧。
-     注意：不能挂 .del-btn 类（它有 hover 显现规则），也不参与媒体查询的常显。 */
-  .act-btn.placeholder { visibility: hidden; pointer-events: none; }
 
   /* 顶部标签页 */
   .tabs {
@@ -540,7 +537,7 @@
     <button class="clear-btn" id="clearBtn">清除已完成</button>
   </div>
 
-  <div class="hint">💾 数据自动保存在本地浏览器 · 双击任务标题可编辑 · 左侧颜色条表示重要度（红=高 黄=中 蓝=低）· 📥 可退回待办池</div>
+  <div class="hint">💾 数据自动保存在本地浏览器 · 双击任务标题可编辑 · 左侧颜色条表示重要度（红=高 黄=中 蓝=低）· 📥 退回待办池 · ⏭ 跳过重复任务的这一天</div>
 
   </div><!-- /dayView -->
 
@@ -622,6 +619,19 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="repeatModal">
+  <div class="modal">
+    <h3>🗑️ 删除重复任务</h3>
+    <div class="sub" id="repeatModalTask"></div>
+    <div class="btn-row">
+      <button class="btn primary" id="repeatSkipOnce">只删这一天</button>
+      <button class="btn ghost" id="repeatCancel">取消</button>
+    </div>
+    <button class="btn danger" id="repeatDeleteAll" style="width:100%;margin-top:8px;">删除整个重复任务</button>
+    <div class="note" id="repeatModalNote"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -673,6 +683,8 @@
   // ---------- 重复规则 ----------
   function occursOn(rule, dateStr) {
     if (dateStr < rule.startDate) return false;
+    // 被单独跳过的那一天不再出现，但规则本身继续生效
+    if (rule.skipDates && rule.skipDates.indexOf(dateStr) !== -1) return false;
     if (rule.repeat === 'daily') return true;
     if (rule.repeat === 'weekly') return dayOfWeek(dateStr) === dayOfWeek(rule.startDate);
     if (rule.repeat === 'monthly') return dayOfMonth(dateStr) === dayOfMonth(rule.startDate);
@@ -682,6 +694,7 @@
   // ---------- 构建当前视图 ----------
   var PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
   var PRI_LABEL = { high: '高', medium: '中', low: '低' };
+  var REPEAT_LABEL = { daily: '每天', weekly: '每周', monthly: '每月' };
 
   // 排序用：priority 可能缺失（同步拉回来的旧数据），必须兜底，否则相减得到 NaN
   function prioRank(p) {
@@ -812,8 +825,7 @@
       meta.push('<span class="badge cat" style="background:' + categoryColor(t.category) + '">' + escapeHtml(t.category) + '</span>');
     }
     if (t.repeat && t.repeat !== 'none') {
-      var rlabel = { daily: '每天', weekly: '每周', monthly: '每月' }[t.repeat];
-      meta.push('<span class="badge repeat">' + rlabel + '</span>');
+      meta.push('<span class="badge repeat">' + (REPEAT_LABEL[t.repeat] || '重复') + '</span>');
     }
 
     var tail;
@@ -822,8 +834,8 @@
     } else if (t.kind === 'once') {
       tail = '<button class="act-btn" data-action="to-backlog" title="退回待办池">📥</button>';
     } else {
-      // 重复任务没有单一日期，不能退回；用占位元素保持卡片右侧对齐
-      tail = '<span class="act-btn placeholder"></span>';
+      // 重复任务没有单一日期，不能退回待办池，但可以跳过这一天
+      tail = '<button class="act-btn" data-action="skip" title="跳过这一天">⏭</button>';
     }
 
     return '<li class="task ' + priCls + doneCls + '" data-id="' + t.id + '" data-kind="' + t.kind + '">' +
@@ -872,9 +884,14 @@
     var kind = li.getAttribute('data-kind');
     var action = el.getAttribute('data-action');
     if (action === 'toggle') toggleTask(id, kind);
-    else if (action === 'delete') removeTask(id, kind);
+    else if (action === 'delete') {
+      // 重复任务删除前先问一句：只删这一天，还是整条规则都删掉
+      if (kind === 'recurring') openRepeatModal(id);
+      else removeTask(id, kind);
+    }
     else if (action === 'assign') openDateModal(id);
     else if (action === 'to-backlog') returnToBacklog(id);
+    else if (action === 'skip') skipOccurrence(id, currentDate);
   }
 
   function onListDblClick(e) {
@@ -1165,6 +1182,56 @@
     showToast('✓ 已退回待办池');
   }
 
+  // ---------- 重复任务：只删这一次 / 删全部 ----------
+  // 「只删这一次」= 给规则记一个跳过日期，规则本身继续存在。
+  // 跳过记录挂在规则自己身上（而不是另开一张全局表），这样整条规则被删掉时它会自动跟着消失。
+  function skipOccurrence(ruleId, dateStr) {
+    var r = state.rules.find(function (x) { return x.id === ruleId; });
+    if (!r || !dateStr) return;
+    if (!Array.isArray(r.skipDates)) r.skipDates = [];
+    if (r.skipDates.indexOf(dateStr) === -1) r.skipDates.push(dateStr);
+    delete state.completions[ruleId + '_' + dateStr];   // 顺带清掉这一天的完成记录
+    commit();
+    render();
+    showToast('✓ 已跳过 ' + shortDate(dateStr));
+  }
+
+  var pendingRepeatId = null;
+
+  function openRepeatModal(id) {
+    var r = state.rules.find(function (x) { return x.id === id; });
+    if (!r) return;
+    pendingRepeatId = id;
+    document.getElementById('repeatModalTask').textContent =
+      '「' + r.title + '」· ' + (REPEAT_LABEL[r.repeat] || '重复');
+    document.getElementById('repeatModalNote').textContent =
+      '「只删这一天」：' + shortDate(currentDate) + ' 不再出现，之后照常。' +
+      '「删除整个」：每天都消失，并清空它的历史完成记录。';
+    document.getElementById('repeatModal').classList.add('show');
+  }
+
+  function closeRepeatModal() {
+    pendingRepeatId = null;
+    document.getElementById('repeatModal').classList.remove('show');
+  }
+
+  function bindRepeatModal() {
+    var modal = document.getElementById('repeatModal');
+    document.getElementById('repeatSkipOnce').addEventListener('click', function () {
+      if (pendingRepeatId) skipOccurrence(pendingRepeatId, currentDate);
+      closeRepeatModal();
+    });
+    document.getElementById('repeatDeleteAll').addEventListener('click', function () {
+      if (pendingRepeatId) removeTask(pendingRepeatId, 'recurring');
+      closeRepeatModal();
+    });
+    document.getElementById('repeatCancel').addEventListener('click', closeRepeatModal);
+    modal.addEventListener('click', function (e) { if (e.target === modal) closeRepeatModal(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && modal.classList.contains('show')) closeRepeatModal();
+    });
+  }
+
   function bindDateModal() {
     var modal = document.getElementById('dateModal');
     var input = document.getElementById('dateModalInput');
@@ -1415,6 +1482,7 @@
   load();
   updateCategoryDatalist();
   bindDateModal();
+  bindRepeatModal();
   render();
   bindSyncUI();
   startSync();

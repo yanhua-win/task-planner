@@ -260,6 +260,81 @@
   }
   .task:hover .del-btn { visibility: visible; }
   .del-btn:hover { background: #fdecec; color: var(--danger); }
+  /* 尾部操作按钮组：📅 安排 / 📥 退回 —— 常显（低对比度），它们是主入口，藏起来等于没做 */
+  .row-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  .act-btn {
+    border: none;
+    background: transparent;
+    color: #aab1c2;
+    font-size: 15px;
+    cursor: pointer;
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    transition: all .15s;
+    line-height: 1;
+  }
+  .act-btn:hover { background: var(--accent-soft); color: var(--accent); }
+  /* 重复任务没有「退回」动作，用占位元素对齐卡片右侧。
+     注意：不能挂 .del-btn 类（它有 hover 显现规则），也不参与媒体查询的常显。 */
+  .act-btn.placeholder { visibility: hidden; pointer-events: none; }
+
+  /* 顶部标签页 */
+  .tabs {
+    display: flex;
+    gap: 5px;
+    background: #eceef5;
+    padding: 4px;
+    border-radius: 12px;
+    margin-bottom: 16px;
+  }
+  .tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 9px 0;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { background: var(--card); color: var(--accent); box-shadow: 0 1px 4px rgba(80, 90, 160, .12); }
+  .tab .count {
+    display: inline-block;
+    min-width: 18px;
+    padding: 0 5px;
+    margin-left: 5px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: #fff;
+    vertical-align: 1px;
+  }
+
+  /* 轻提示 */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 30px;
+    transform: translateX(-50%) translateY(8px);
+    background: rgba(31, 36, 48, .92);
+    color: #fff;
+    font-size: 13px;
+    padding: 9px 16px;
+    border-radius: 99px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .22s, transform .22s;
+    z-index: 200;
+    white-space: nowrap;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
   /* 空状态 */
   .empty {
@@ -389,6 +464,8 @@
     .nav-btn { width: 40px; height: 40px; }
     .date-label { min-width: 0; font-size: 16px; }
     .del-btn { visibility: visible; }
+    .act-btn { width: 34px; height: 34px; font-size: 16px; }
+    .toast { bottom: 22px; }
   }
 </style>
 </head>
@@ -399,6 +476,13 @@
     <button class="gear-btn" id="syncBtn" title="同步设置">⚙️</button>
     <div class="sync-bar"><span class="sync-dot" id="syncDot"></span><span id="syncText">未配置同步</span></div>
   </header>
+
+  <div class="tabs">
+    <button class="tab active" id="tabDay">每日任务</button>
+    <button class="tab" id="tabBacklog">待办池</button>
+  </div>
+
+  <div id="dayView">
 
   <div class="date-nav">
     <button class="nav-btn" id="prevBtn" title="前一天">‹</button>
@@ -432,7 +516,6 @@
       </span>
       <span><label>🏷️ 分类</label>
         <input type="text" class="cat" id="categoryInput" list="categoryPresets" placeholder="如：工作">
-        <datalist id="categoryPresets"></datalist>
       </span>
       <span><label>🔁 重复</label>
         <select id="repeatSelect">
@@ -457,7 +540,47 @@
     <button class="clear-btn" id="clearBtn">清除已完成</button>
   </div>
 
-  <div class="hint">💾 数据自动保存在本地浏览器 · 双击任务标题可编辑 · 左侧颜色条表示重要度（红=高 黄=中 蓝=低）</div>
+  <div class="hint">💾 数据自动保存在本地浏览器 · 双击任务标题可编辑 · 左侧颜色条表示重要度（红=高 黄=中 蓝=低）· 📥 可退回待办池</div>
+
+  </div><!-- /dayView -->
+
+  <div id="backlogView" style="display:none">
+    <div class="add-card">
+      <div class="add-row">
+        <input type="text" id="bTitleInput" placeholder="记一件待办，稍后再安排…" maxlength="100">
+        <button class="add-btn" id="bAddBtn">添加</button>
+      </div>
+      <div class="opts-row">
+        <span><label>⏰ 开始</label><input type="time" id="bStartTimeInput"></span>
+        <span><label>结束</label><input type="time" id="bEndTimeInput"></span>
+        <span><label>🎯 重要度</label>
+          <select id="bPrioritySelect">
+            <option value="high">高</option>
+            <option value="medium" selected>中</option>
+            <option value="low">低</option>
+          </select>
+        </span>
+        <span><label>🏷️ 分类</label>
+          <input type="text" class="cat" id="bCategoryInput" list="categoryPresets" placeholder="如：工作">
+        </span>
+      </div>
+    </div>
+
+    <ul class="task-list" id="backlogList"></ul>
+    <div class="empty" id="backlogEmpty" style="display:none;">
+      <span class="big">📥</span>
+      待办池是空的<br>把还没决定哪天做的事先扔进来
+    </div>
+
+    <div class="footer-actions">
+      <button class="clear-btn" id="bClearBtn">清除已完成</button>
+    </div>
+
+    <div class="hint">📥 待办池 · 点 📅 指定到某一天 · 双击标题可编辑</div>
+  </div><!-- /backlogView -->
+
+  <!-- datalist 必须放在两个视图之外：日视图隐藏时，里面的 datalist 会失效 -->
+  <datalist id="categoryPresets"></datalist>
 </div>
 
 <div class="modal-overlay" id="syncModal">
@@ -480,6 +603,27 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="dateModal">
+  <div class="modal">
+    <h3>📅 安排到哪一天？</h3>
+    <div class="sub" id="dateModalTask"></div>
+    <label>日期</label>
+    <input type="date" id="dateModalInput">
+    <div class="opts-row" style="margin-top:12px;">
+      <button class="today-btn" data-quick="today">今天</button>
+      <button class="today-btn" data-quick="tomorrow">明天</button>
+      <button class="today-btn" data-quick="sat">周六</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" id="dateModalOk">加入</button>
+      <button class="btn ghost" id="dateModalCancel">取消</button>
+    </div>
+    <div class="status" id="dateModalStatus"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
 <script>
 (function () {
   'use strict';
@@ -499,6 +643,8 @@
   var currentDate = todayStr();
   var filterCategory = '全部';
   var nextId = Date.now();
+  var activeTab = 'day';        // 'day' | 'backlog'
+  var pendingAssignId = null;   // 日期模态框当前正在安排的任务 id
 
   // ---------- 工具函数 ----------
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
@@ -535,10 +681,33 @@
 
   // ---------- 构建当前视图 ----------
   var PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
+  var PRI_LABEL = { high: '高', medium: '中', low: '低' };
+
+  // 排序用：priority 可能缺失（同步拉回来的旧数据），必须兜底，否则相减得到 NaN
+  function prioRank(p) {
+    var r = PRIORITY_ORDER[p];
+    return typeof r === 'number' ? r : 1;
+  }
+
+  function compareTasks(a, b) {
+    var at = a.startTime || a.endTime || null;
+    var bt = b.startTime || b.endTime || null;
+    if (at && bt) {
+      if (at !== bt) return at < bt ? -1 : 1;
+      return prioRank(a.priority) - prioRank(b.priority);
+    }
+    if (at) return -1;
+    if (bt) return 1;
+    var pd = prioRank(a.priority) - prioRank(b.priority);
+    if (pd !== 0) return pd;
+    return (a.createdAt || 0) - (b.createdAt || 0);
+  }
+
   function getViewTasks(dateStr) {
     var list = [];
     state.tasks.forEach(function (t) {
-      if (t.date === dateStr) list.push({ id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
+      // t.date 为 null 的是待办池条目，只认有日期的（显式写成两层，别让后来人改成模糊匹配）
+      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
     });
     state.rules.forEach(function (r) {
       if (occursOn(r, dateStr)) {
@@ -546,24 +715,37 @@
         list.push({ id: r.id, title: r.title, startTime: r.startTime, endTime: r.endTime, category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
       }
     });
-    list.sort(function (a, b) {
-      var at = a.startTime || a.endTime || null;
-      var bt = b.startTime || b.endTime || null;
-      if (at && bt) {
-        if (at !== bt) return at < bt ? -1 : 1;
-        return PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
-      }
-      if (at) return -1;
-      if (bt) return 1;
-      var pd = PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
-      if (pd !== 0) return pd;
-      return a.createdAt - b.createdAt;
-    });
+    list.sort(compareTasks);
     return list;
   }
 
+  // 待办池 = date 为空的任务。排序与日视图**刻意不同**：
+  // 收集箱的心智是「新收进来的在最上面」，所以 createdAt 用降序。
+  function getBacklogTasks() {
+    return state.tasks
+      .filter(function (t) { return !t.date; })
+      .map(function (t) {
+        normalizeTask(t);
+        return { id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
+      })
+      .sort(function (a, b) {
+        var pd = prioRank(a.priority) - prioRank(b.priority);
+        if (pd !== 0) return pd;
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+  }
+
   // ---------- 渲染 ----------
+  // render() 是唯一的刷新入口，必须同时刷新两个视图。
+  // 因为 toggleTask / removeTask / startEdit 结尾统统是 commit(); render();
+  // 漏掉待办池就会产生「勾选没反应」「编辑框僵死在卡片上」这类 bug。
   function render() {
+    renderDay();
+    renderBacklog();
+    renderTabs();
+  }
+
+  function renderDay() {
     var list = getViewTasks(currentDate);
 
     // 日期
@@ -586,7 +768,23 @@
     if (filterCategory !== '全部') {
       filtered = list.filter(function (t) { return t.category === filterCategory; });
     }
-    renderList(filtered);
+    renderList(document.getElementById('taskList'), document.getElementById('emptyState'), filtered, 'day');
+  }
+
+  function renderBacklog() {
+    renderList(document.getElementById('backlogList'), document.getElementById('backlogEmpty'),
+               getBacklogTasks(), 'backlog');
+  }
+
+  // 标签态 + 徽章计数 + 两个视图的显隐。显隐只在这里一处切换，别在别处再写一遍。
+  function renderTabs() {
+    var n = state.tasks.filter(function (t) { return !t.date && !t.completed; }).length;
+    document.getElementById('tabDay').className = 'tab' + (activeTab === 'day' ? ' active' : '');
+    var backTab = document.getElementById('tabBacklog');
+    backTab.className = 'tab' + (activeTab === 'backlog' ? ' active' : '');
+    backTab.innerHTML = '待办池' + (n ? '<span class="count">' + n + '</span>' : '');
+    document.getElementById('dayView').style.display = activeTab === 'day' ? '' : 'none';
+    document.getElementById('backlogView').style.display = activeTab === 'backlog' ? '' : 'none';
   }
 
   function renderFilter() {
@@ -600,9 +798,47 @@
     row.innerHTML = html;
   }
 
-  function renderList(list) {
-    var ul = document.getElementById('taskList');
-    var empty = document.getElementById('emptyState');
+  function taskCardHtml(t, overdue, mode) {
+    var doneCls = t.completed ? ' done' : '';
+    var checkCls = t.completed ? 'check on' : 'check';
+    var priCls = 'pri-' + (t.priority || 'medium');
+    var meta = [];
+    if (t.startTime || t.endTime) {
+      var range = (t.startTime || '') + (t.startTime && t.endTime ? ' – ' : '') + (t.endTime || '');
+      meta.push('<span class="badge time' + (overdue ? ' overdue' : '') + '">' + escapeHtml(range) + '</span>');
+    }
+    meta.push('<span class="badge priority ' + (t.priority || 'medium') + '">' + PRI_LABEL[t.priority || 'medium'] + '</span>');
+    if (t.category) {
+      meta.push('<span class="badge cat" style="background:' + categoryColor(t.category) + '">' + escapeHtml(t.category) + '</span>');
+    }
+    if (t.repeat && t.repeat !== 'none') {
+      var rlabel = { daily: '每天', weekly: '每周', monthly: '每月' }[t.repeat];
+      meta.push('<span class="badge repeat">' + rlabel + '</span>');
+    }
+
+    var tail;
+    if (mode === 'backlog') {
+      tail = '<button class="act-btn" data-action="assign" title="安排到某一天">📅</button>';
+    } else if (t.kind === 'once') {
+      tail = '<button class="act-btn" data-action="to-backlog" title="退回待办池">📥</button>';
+    } else {
+      // 重复任务没有单一日期，不能退回；用占位元素保持卡片右侧对齐
+      tail = '<span class="act-btn placeholder"></span>';
+    }
+
+    return '<li class="task ' + priCls + doneCls + '" data-id="' + t.id + '" data-kind="' + t.kind + '">' +
+      '<button class="' + checkCls + '" data-action="toggle" title="标记完成/未完成"></button>' +
+      '<div class="task-main">' +
+        '<div class="task-title" data-action="edit" title="双击编辑">' + escapeHtml(t.title) + '</div>' +
+        (meta.length ? '<div class="task-meta">' + meta.join('') + '</div>' : '') +
+      '</div>' +
+      '<div class="row-actions">' + tail +
+        '<button class="del-btn" data-action="delete" title="删除">✕</button>' +
+      '</div>' +
+    '</li>';
+  }
+
+  function renderList(ul, empty, list, mode) {
     if (list.length === 0) {
       ul.innerHTML = '';
       empty.style.display = 'block';
@@ -613,58 +849,46 @@
     var nowHM = (function () {
       var d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes());
     })();
+    // 待办项没有资格「逾期」——还没决定哪天做。所以只有日视图才计算 overdue。
+    var allowOverdue = (mode === 'day');
     var isToday = currentDate === todayStr();
-    var PRI_LABEL = { high: '高', medium: '中', low: '低' };
 
     ul.innerHTML = list.map(function (t) {
-      var doneCls = t.completed ? ' done' : '';
-      var checkCls = t.completed ? 'check on' : 'check';
-      var priCls = 'pri-' + (t.priority || 'medium');
-      var meta = [];
-      if (t.startTime || t.endTime) {
-        var range = (t.startTime || '') + (t.startTime && t.endTime ? ' – ' : '') + (t.endTime || '');
-        var effTime = t.endTime || t.startTime;
-        var overdue = isToday && !t.completed && effTime < nowHM;
-        meta.push('<span class="badge time' + (overdue ? ' overdue' : '') + '">' + escapeHtml(range) + '</span>');
-      }
-      meta.push('<span class="badge priority ' + (t.priority || 'medium') + '">' + PRI_LABEL[t.priority || 'medium'] + '</span>');
-      if (t.category) {
-        meta.push('<span class="badge cat" style="background:' + categoryColor(t.category) + '">' + escapeHtml(t.category) + '</span>');
-      }
-      if (t.repeat && t.repeat !== 'none') {
-        var rlabel = { daily: '每天', weekly: '每周', monthly: '每月' }[t.repeat];
-        meta.push('<span class="badge repeat">' + rlabel + '</span>');
-      }
-      return '<li class="task ' + priCls + doneCls + '" data-id="' + t.id + '" data-kind="' + t.kind + '">' +
-        '<button class="' + checkCls + '" data-action="toggle" title="标记完成/未完成"></button>' +
-        '<div class="task-main">' +
-          '<div class="task-title" data-action="edit" title="双击编辑">' + escapeHtml(t.title) + '</div>' +
-          (meta.length ? '<div class="task-meta">' + meta.join('') + '</div>' : '') +
-        '</div>' +
-        '<button class="del-btn" data-action="delete" title="删除">✕</button>' +
-      '</li>';
+      var effTime = t.endTime || t.startTime;
+      var overdue = allowOverdue && isToday && !t.completed && !!effTime && effTime < nowHM;
+      return taskCardHtml(t, overdue, mode);
     }).join('');
   }
 
   // ---------- 事件 ----------
-  document.getElementById('taskList').addEventListener('click', function (e) {
+  // 两个 <ul> 互不嵌套，各绑一次同一个具名函数不会互相干扰。
+  // （危险的是绑到共同祖先上 —— 那样一次点击会跑两遍。）
+  function onListClick(e) {
     var el = e.target.closest('[data-action]');
     if (!el) return;
     var li = el.closest('.task');
+    if (!li) return;
     var id = li.getAttribute('data-id');
     var kind = li.getAttribute('data-kind');
     var action = el.getAttribute('data-action');
     if (action === 'toggle') toggleTask(id, kind);
     else if (action === 'delete') removeTask(id, kind);
-  });
+    else if (action === 'assign') openDateModal(id);
+    else if (action === 'to-backlog') returnToBacklog(id);
+  }
 
-  document.getElementById('taskList').addEventListener('dblclick', function (e) {
+  function onListDblClick(e) {
     var titleEl = e.target.closest('[data-action="edit"]');
     if (!titleEl) return;
     var li = titleEl.closest('.task');
-    var id = li.getAttribute('data-id');
-    var kind = li.getAttribute('data-kind');
-    startEdit(titleEl, id, kind);
+    if (!li) return;
+    startEdit(titleEl, li.getAttribute('data-id'), li.getAttribute('data-kind'));
+  }
+
+  ['taskList', 'backlogList'].forEach(function (listId) {
+    var ul = document.getElementById(listId);
+    ul.addEventListener('click', onListClick);
+    ul.addEventListener('dblclick', onListDblClick);
   });
 
   function startEdit(titleEl, id, kind) {
@@ -708,7 +932,15 @@
   document.getElementById('titleInput').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') addTask();
   });
-  document.getElementById('clearBtn').addEventListener('click', clearCompleted);
+  document.getElementById('clearBtn').addEventListener('click', clearCompletedDay);
+
+  document.getElementById('tabDay').addEventListener('click', function () { setTab('day'); });
+  document.getElementById('tabBacklog').addEventListener('click', function () { setTab('backlog'); });
+  document.getElementById('bAddBtn').addEventListener('click', addBacklogTask);
+  document.getElementById('bTitleInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') addBacklogTask();
+  });
+  document.getElementById('bClearBtn').addEventListener('click', clearCompletedBacklog);
 
   function changeDate(n) {
     currentDate = addDaysStr(currentDate, n);
@@ -717,11 +949,22 @@
   }
   function goToday() {
     currentDate = todayStr();
+    filterCategory = '全部';   // 不重置的话，切换后可能被筛选条件挡住看不到任务
+    render();
+  }
+  function setTab(name) {
+    if (activeTab === name) return;
+    activeTab = name;
     render();
   }
 
   // ---------- 数据操作 ----------
+  // kind 白名单兜底：卡片若漏了 data-kind，getAttribute 会返回 null，
+  // 于是走 else 分支把 'null_2026-09-18' 写进 completions 污染数据。
+  function validKind(kind) { return kind === 'once' || kind === 'recurring'; }
+
   function toggleTask(id, kind) {
+    if (!validKind(kind)) return;
     if (kind === 'once') {
       var t = state.tasks.find(function (x) { return x.id === id; });
       if (t) t.completed = !t.completed;
@@ -734,6 +977,7 @@
   }
 
   function removeTask(id, kind) {
+    if (!validKind(kind)) return;
     if (kind === 'once') {
       state.tasks = state.tasks.filter(function (x) { return x.id !== id; });
     } else {
@@ -747,6 +991,7 @@
   }
 
   function editTitle(id, kind, newTitle) {
+    if (!validKind(kind)) return;
     if (kind === 'once') {
       var t = state.tasks.find(function (x) { return x.id === id; });
       if (t) t.title = newTitle;
@@ -799,7 +1044,7 @@
     render();
   }
 
-  function clearCompleted() {
+  function clearCompletedDay() {
     state.tasks = state.tasks.filter(function (t) { return !(t.date === currentDate && t.completed); });
     state.rules.forEach(function (r) {
       var key = r.id + '_' + currentDate;
@@ -807,6 +1052,151 @@
     });
     commit();
     render();
+  }
+
+  // 待办池版：只清已完成的待办项。别动 state.rules / state.completions —— 那些是日视图专属的。
+  function clearCompletedBacklog() {
+    state.tasks = state.tasks.filter(function (t) { return t.date || !t.completed; });
+    commit();
+    render();
+  }
+
+  // ---------- 待办池 ----------
+  function addBacklogTask() {
+    var titleInput = document.getElementById('bTitleInput');
+    var title = titleInput.value.trim();
+    if (!title) { titleInput.focus(); return; }
+
+    var startTime = document.getElementById('bStartTimeInput').value || null;
+    var endTime = document.getElementById('bEndTimeInput').value || null;
+    if (startTime && endTime && endTime < startTime) { var tmp = startTime; startTime = endTime; endTime = tmp; }
+    var category = document.getElementById('bCategoryInput').value.trim() || null;
+    var priority = document.getElementById('bPrioritySelect').value || 'medium';
+
+    if (category && state.categories.indexOf(category) === -1) {
+      state.categories.push(category);
+    }
+
+    state.tasks.push({
+      id: 't' + (nextId++),
+      title: title, startTime: startTime, endTime: endTime, category: category, priority: priority,
+      date: null, completed: false, createdAt: Date.now()
+    });
+
+    titleInput.value = '';
+    document.getElementById('bStartTimeInput').value = '';
+    document.getElementById('bEndTimeInput').value = '';
+    document.getElementById('bCategoryInput').value = '';
+    document.getElementById('bPrioritySelect').value = 'medium';
+    titleInput.focus();
+    updateCategoryDatalist();
+    commit();
+    render();
+  }
+
+  // 日期字符串校验。不校验的话 parseDate 产出 NaN、toDateStr 得到 'NaN-NaN-NaN'，
+  // 而那是个**真值** —— 任务会变成既不在待办池、也不在任何一天、还删不掉的幽灵。
+  function isValidDateStr(v) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+    return toDateStr(parseDate(v)) === v;   // 顺便挡住 2026-02-31 这类会被 Date 悄悄滚动的输入
+  }
+
+  function shortDate(str) {
+    var d = parseDate(str);
+    return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  }
+
+  var toastTimer = null;
+  function showToast(msg) {
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2500);
+  }
+
+  function setDateModalStatus(msg, cls) {
+    var el = document.getElementById('dateModalStatus');
+    el.textContent = msg || '';
+    el.className = 'status' + (cls ? ' ' + cls : '');
+  }
+
+  function openDateModal(id) {
+    var t = state.tasks.find(function (x) { return x.id === id; });
+    if (!t || t.date) return;          // 不存在，或已经被安排过了
+    pendingAssignId = id;
+    document.getElementById('dateModalTask').textContent = t.title;
+    // 默认填 currentDate 而非今天：用户多半是看着某一天决定「安排到那天」
+    document.getElementById('dateModalInput').value = currentDate || todayStr();
+    setDateModalStatus('');
+    document.getElementById('dateModal').classList.add('show');
+    document.getElementById('dateModalInput').focus();
+  }
+
+  function closeDateModal() {
+    pendingAssignId = null;
+    document.getElementById('dateModal').classList.remove('show');
+  }
+
+  function assignToDate(id, dateStr) {
+    // 模态框开着的这段时间里，可能切过 tab、被 3 秒一次的 pullState 整体覆盖、
+    // 或被另一台设备删了 —— 所以入口重新 find 一次并防御。
+    var t = state.tasks.find(function (x) { return x.id === id; });
+    if (!t || t.date) { closeDateModal(); return; }
+    if (!isValidDateStr(dateStr)) {
+      setDateModalStatus('日期格式不对，请用上面的选择器选一天', 'err');
+      return;
+    }
+    t.date = dateStr;
+    commit();
+    render();
+    closeDateModal();
+    showToast('✓ 已加入 ' + shortDate(dateStr));
+  }
+
+  function returnToBacklog(id) {
+    var t = state.tasks.find(function (x) { return x.id === id; });
+    if (!t || !t.date) return;
+    // completed 和 createdAt 都保留：退回的语义是「改期」，与是否做完正交；
+    // createdAt 还是排序的 tiebreak，清了会掉到同优先级组末尾。
+    t.date = null;
+    commit();
+    render();
+    showToast('✓ 已退回待办池');
+  }
+
+  function bindDateModal() {
+    var modal = document.getElementById('dateModal');
+    var input = document.getElementById('dateModalInput');
+
+    document.getElementById('dateModalOk').addEventListener('click', function () {
+      if (pendingAssignId) assignToDate(pendingAssignId, input.value);
+    });
+    document.getElementById('dateModalCancel').addEventListener('click', closeDateModal);
+    modal.addEventListener('click', function (e) { if (e.target === modal) closeDateModal(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && modal.classList.contains('show')) closeDateModal();
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (pendingAssignId) assignToDate(pendingAssignId, input.value);
+      }
+    });
+
+    // 快捷按钮直接提交并关窗；主按钮「加入」留给手动选日期的人
+    modal.querySelectorAll('[data-quick]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var kind = btn.getAttribute('data-quick');
+        // 必须用 todayStr()，不能用 toISOString() —— 后者是 UTC，北京时间凌晨会整体差一天
+        var today = todayStr();
+        var v;
+        if (kind === 'today') v = today;
+        else if (kind === 'tomorrow') v = addDaysStr(today, 1);
+        else v = addDaysStr(today, (6 - dayOfWeek(today) + 7) % 7);   // 最近的周六；今天就是周六则为今天
+        if (pendingAssignId) assignToDate(pendingAssignId, v);
+      });
+    });
   }
 
   function updateCategoryDatalist() {
@@ -841,12 +1231,17 @@
       }
     } catch (e) { /* 数据损坏则用默认空状态 */ }
   }
+  // 补齐可能缺失的字段。priority / createdAt 一旦缺失，排序相减会得到 NaN
+  // （V8 下基本等于不排序），而 pullState 拉回来的数据以前完全没走过这一步。
+  function normalizeTask(it) {
+    if (it.time && !it.startTime) { it.startTime = it.time; }
+    delete it.time;
+    if (!it.priority) it.priority = 'medium';
+    if (typeof it.createdAt !== 'number') it.createdAt = 0;
+    return it;
+  }
   function migrate(items) {
-    items.forEach(function (it) {
-      if (it.time && !it.startTime) { it.startTime = it.time; }
-      delete it.time;
-      if (!it.priority) it.priority = 'medium';
-    });
+    items.forEach(normalizeTask);
   }
 
   // ---------- 云同步 ----------
@@ -876,6 +1271,36 @@
     };
   }
 
+  async function throwApiError(res, prefix) {
+    var msg = prefix + ' HTTP ' + res.status;
+    try {
+      var txt = await res.text();
+      if (txt) {
+        try {
+          var j = JSON.parse(txt);
+          msg += j && j.message ? '：' + j.message : '：' + txt.slice(0, 200);
+        } catch (e2) {
+          msg += '：' + txt.slice(0, 200);
+        }
+      }
+    } catch (e3) {}
+    throw new Error(msg);
+  }
+
+  function friendlySyncError(e) {
+    var m = e && e.message ? e.message : String(e);
+    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) {
+      m += '（网址错误/网络不通，或本地 file:// 打开被跨域拦截）';
+    } else if (/HTTP 404/.test(m)) {
+      m += '（表 sync_state 不存在：请到 Supabase SQL Editor 运行 supabase-setup.sql）';
+    } else if (/HTTP 401|HTTP 403/.test(m)) {
+      m += '（anon key 错误，或 RLS 策略未配置）';
+    } else if (/HTTP 400/.test(m)) {
+      m += '（请求格式有误，检查网址是否为 https://xxxx.supabase.co）';
+    }
+    return m;
+  }
+
   function setSyncUI(mode, text) {
     var dot = document.getElementById('syncDot');
     var label = document.getElementById('syncText');
@@ -889,7 +1314,7 @@
       var base = syncCfg.url.replace(/\/+$/, '');
       var url = base + '/rest/v1/sync_state?id=eq.' + encodeURIComponent(syncRowId()) + '&select=data';
       var res = await fetch(url, { headers: supabaseHeaders() });
-      if (!res.ok) throw new Error('拉取失败 HTTP ' + res.status);
+      if (!res.ok) await throwApiError(res, '拉取失败');
       var rows = await res.json();
       if (rows && rows.length && rows[0].data) {
         var d = rows[0].data;
@@ -899,6 +1324,8 @@
           state.completions = d.completions || {};
           state.categories = d.categories && d.categories.length ? d.categories : DEFAULT_CATEGORIES.slice();
           state.rev = d.rev;
+          migrate(state.tasks);
+          migrate(state.rules);
           save();
           updateCategoryDatalist();
           render();
@@ -906,7 +1333,7 @@
         }
       }
     } catch (e) {
-      setSyncUI('err', '同步失败');
+      setSyncUI('err', friendlySyncError(e));
     }
   }
 
@@ -921,10 +1348,10 @@
         headers: Object.assign({ 'Prefer': 'resolution=merge-duplicates, return=minimal' }, supabaseHeaders()),
         body: JSON.stringify(body)
       });
-      if (!res.ok) throw new Error('推送失败 HTTP ' + res.status);
+      if (!res.ok) await throwApiError(res, '推送失败');
       setSyncUI('on', '已同步');
     } catch (e) {
-      setSyncUI('err', '同步失败');
+      setSyncUI('err', friendlySyncError(e));
     }
   }
 
@@ -987,6 +1414,7 @@
   // ---------- 启动 ----------
   load();
   updateCategoryDatalist();
+  bindDateModal();
   render();
   bindSyncUI();
   startSync();

@@ -5,6 +5,13 @@ name: Supabase 保活
 #
 # 目标项目：yjjqzzagrvknczqpuswz.supabase.co
 # 每天跑两次（UTC 02:23 / 14:23，即北京时间 10:23 / 22:23）
+#
+# 【首次使用前必须做一步】
+# 到仓库 Settings → Secrets and variables → Actions → New repository secret
+#   Name  填：SUPABASE_ANON_KEY
+#   Secret 填：你项目的 anon public key（在应用里点 ⚙️ 就能看到，或去 Supabase 控制台
+#             Project Settings → API 复制）
+# 不配这个，下面的请求会被 Supabase 拒绝（401）。
 
 on:
   schedule:
@@ -22,23 +29,50 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 访问 Supabase 项目接口
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          URL="https://yjjqzzagrvknczqpuswz.supabase.co/auth/v1/health"
+          URL="https://yjjqzzagrvknczqpuswz.supabase.co/rest/v1/sync_state?select=id&limit=1"
+
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::仓库还没配置 Secret。请到 Settings → Secrets and variables → Actions → New repository secret，Name 填 SUPABASE_ANON_KEY，Secret 填你项目的 anon public key。"
+            exit 1
+          fi
+
+          code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 30 \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            "$URL" || echo "000")
+
           echo "GET $URL"
-          code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 30 "$URL" || echo "000")
           echo "HTTP $code"
-          echo "响应内容：$(cat /tmp/body 2>/dev/null)"
+          echo "响应：$(cat /tmp/body 2>/dev/null)"
 
-          if grep -qi "project paused" /tmp/body 2>/dev/null; then
-            echo "::error::项目处于【暂停】状态。请登录 https://supabase.com/dashboard 打开该项目，点 Restore project 恢复。"
-            exit 1
-          fi
-          if [ "$code" != "200" ]; then
-            echo "::error::接口未返回 200（实际 HTTP $code）。请到 Supabase 控制台确认项目状态。"
-            exit 1
-          fi
-
-          echo "✅ 项目正常，本次保活成功"
+          case "$code" in
+            200)
+              echo "✅ 项目正常，数据库可读，本次保活成功"
+              ;;
+            540)
+              echo "::error::项目处于【暂停】状态。请登录 https://supabase.com/dashboard 打开该项目，点 Restore project 恢复。"
+              exit 1
+              ;;
+            401|403)
+              echo "::error::API key 无效或被拒。请检查 Secret SUPABASE_ANON_KEY 是否填的是 anon public key（不是 service_role key）。"
+              exit 1
+              ;;
+            404)
+              echo "::error::表 sync_state 不存在。请到 Supabase 控制台 SQL Editor 运行 supabase-setup.sql。"
+              exit 1
+              ;;
+            *)
+              if grep -qi "project paused" /tmp/body 2>/dev/null; then
+                echo "::error::项目处于【暂停】状态。请登录 https://supabase.com/dashboard 点 Restore project 恢复。"
+                exit 1
+              fi
+              echo "::error::接口未返回 200（实际 HTTP $code）。请到 Supabase 控制台确认项目状态。"
+              exit 1
+              ;;
+          esac
 
       - name: 更新心跳记录（每月一次提交，避免定时任务被自动停用）
         continue-on-error: true

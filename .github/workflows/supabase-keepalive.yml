@@ -1,0 +1,57 @@
+name: Supabase 保活
+
+# 目的：定期访问 Supabase 项目接口，避免免费版因闲置满 7 天被自动暂停。
+# 运行在 GitHub 云端，与你自己的电脑开不开机无关。
+#
+# 目标项目：yjjqzzagrvknczqpuswz.supabase.co
+# 每天跑两次（UTC 02:23 / 14:23，即北京时间 10:23 / 22:23）
+
+on:
+  schedule:
+    - cron: "23 2,14 * * *"
+  # 允许在 Actions 页面手动点 "Run workflow" 立即测试，不用干等
+  workflow_dispatch:
+
+permissions:
+  contents: write # 供下方"心跳提交"使用，防止仓库长期无活动导致定时任务被 GitHub 停用
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 访问 Supabase 项目接口
+        run: |
+          URL="https://yjjqzzagrvknczqpuswz.supabase.co/auth/v1/health"
+          echo "GET $URL"
+          code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 30 "$URL" || echo "000")
+          echo "HTTP $code"
+          echo "响应内容：$(cat /tmp/body 2>/dev/null)"
+
+          if grep -qi "project paused" /tmp/body 2>/dev/null; then
+            echo "::error::项目处于【暂停】状态。请登录 https://supabase.com/dashboard 打开该项目，点 Restore project 恢复。"
+            exit 1
+          fi
+          if [ "$code" != "200" ]; then
+            echo "::error::接口未返回 200（实际 HTTP $code）。请到 Supabase 控制台确认项目状态。"
+            exit 1
+          fi
+
+          echo "✅ 项目正常，本次保活成功"
+
+      - name: 更新心跳记录（每月一次提交，避免定时任务被自动停用）
+        continue-on-error: true
+        run: |
+          mkdir -p .keepalive
+          date -u +%Y-%m > .keepalive/last-ping.txt
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .keepalive/last-ping.txt
+            git commit -m "chore: 保活心跳 $(date -u +%Y-%m)"
+            git push
+            echo "已提交本月心跳"
+          else
+            echo "本月心跳记录已存在，跳过提交"
+          fi

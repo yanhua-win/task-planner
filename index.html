@@ -235,6 +235,8 @@
   }
   .badge.time { background: #eef0ff; color: #4f52e0; font-variant-numeric: tabular-nums; }
   .badge.time.overdue { background: #fdecec; color: #dc2626; }
+  .badge.deadline { background: #fff7ed; color: #c2410c; font-variant-numeric: tabular-nums; }
+  .badge.deadline.overdue { background: #fdecec; color: #dc2626; font-weight: 600; }
   .badge.cat { color: #fff; }
   .badge.repeat { background: #f0fdf4; color: #16a34a; }
   .badge.duration { background: #f5f3ff; color: #7c3aed; }
@@ -505,6 +507,7 @@
     <div class="opts-row">
       <span><label>⏰ 开始</label><input type="time" id="startTimeInput"></span>
       <span><label>结束</label><input type="time" id="endTimeInput"></span>
+      <span><label>⏳ 截止</label><input type="time" id="deadlineInput"></span>
       <span><label>⏱ 时长</label>
         <select id="durationSelect">
           <option value="0" selected>不设</option>
@@ -551,7 +554,7 @@
     <button class="clear-btn" id="clearBtn">清除已完成</button>
   </div>
 
-  <div class="hint">💾 数据自动保存在本地浏览器 · 双击任务标题可编辑 · 左侧颜色条表示重要度（红=高 黄=中 蓝=低）· 📥 退回待办池 · ⏩ 跳过重复任务的这一天</div>
+  <div class="hint">💾 数据自动保存在本地浏览器 · 双击任务标题可编辑 · 左侧颜色条表示重要度（红=高 黄=中 蓝=低）· ⏳ 设置截止时间 · 📥 退回待办池 · ⏩ 跳过重复任务的这一天</div>
 
   </div><!-- /dayView -->
 
@@ -564,6 +567,7 @@
       <div class="opts-row">
         <span><label>⏰ 开始</label><input type="time" id="bStartTimeInput"></span>
         <span><label>结束</label><input type="time" id="bEndTimeInput"></span>
+        <span><label>⏳ 截止</label><input type="time" id="bDeadlineInput"></span>
         <span><label>⏱ 时长</label>
           <select id="bDurationSelect">
             <option value="0" selected>不设</option>
@@ -600,7 +604,7 @@
       <button class="clear-btn" id="bClearBtn">清除已完成</button>
     </div>
 
-    <div class="hint">📥 待办池 · 点 📅 指定到某一天 · 双击标题可编辑</div>
+    <div class="hint">📥 待办池 · 点 📅 指定到某一天 · ⏳ 设置截止时间 · 双击标题可编辑</div>
   </div><!-- /backlogView -->
 
   <!-- datalist 必须放在两个视图之外：日视图隐藏时，里面的 datalist 会失效 -->
@@ -656,6 +660,20 @@
     </div>
     <button class="btn danger" id="repeatDeleteAll" style="width:100%;margin-top:8px;">删除整个重复任务</button>
     <div class="note" id="repeatModalNote"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="deadlineModal">
+  <div class="modal">
+    <h3>⏳ 设置截止时间</h3>
+    <div class="sub" id="deadlineModalTask"></div>
+    <label>截止时间（当天，可留空）</label>
+    <input type="time" id="deadlineModalInput">
+    <div class="note">留空并保存 = 取消截止时间。重复任务会应用到每一次。</div>
+    <div class="btn-row">
+      <button class="btn primary" id="deadlineModalOk">保存</button>
+      <button class="btn ghost" id="deadlineModalCancel">取消</button>
+    </div>
   </div>
 </div>
 
@@ -761,12 +779,12 @@
     var list = [];
     state.tasks.forEach(function (t) {
       // t.date 为 null 的是待办池条目，只认有日期的（显式写成两层，别让后来人改成模糊匹配）
-      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
+      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: t.deadline, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
     });
     state.rules.forEach(function (r) {
       if (occursOn(r, dateStr)) {
         var key = r.id + '_' + dateStr;
-        list.push({ id: r.id, title: r.title, startTime: r.startTime, endTime: r.endTime, duration: r.duration, category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
+        list.push({ id: r.id, title: r.title, startTime: r.startTime, endTime: r.endTime, duration: r.duration, deadline: r.deadline, category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
       }
     });
     list.sort(compareTasks);
@@ -780,7 +798,7 @@
       .filter(function (t) { return !t.date; })
       .map(function (t) {
         normalizeTask(t);
-        return { id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
+        return { id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: t.deadline, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
       })
       .sort(function (a, b) {
         var pd = prioRank(a.priority) - prioRank(b.priority);
@@ -852,7 +870,7 @@
     row.innerHTML = html;
   }
 
-  function taskCardHtml(t, overdue, mode) {
+  function taskCardHtml(t, overdue, mode, deadlineLate) {
     var doneCls = t.completed ? ' done' : '';
     var checkCls = t.completed ? 'check on' : 'check';
     var priCls = 'pri-' + (t.priority || 'medium');
@@ -860,6 +878,10 @@
     if (t.startTime || t.endTime) {
       var range = (t.startTime || '') + (t.startTime && t.endTime ? ' – ' : '') + (t.endTime || '');
       meta.push('<span class="badge time' + (overdue ? ' overdue' : '') + '">' + escapeHtml(range) + '</span>');
+    }
+    if (t.deadline) {
+      meta.push('<span class="badge deadline' + (deadlineLate ? ' overdue' : '') + '">⏳ 截止 ' +
+        escapeHtml(t.deadline) + (deadlineLate ? ' · 已逾期' : '') + '</span>');
     }
     if (t.duration) {
       meta.push('<span class="badge duration">⏱ ' + escapeHtml(formatDuration(t.duration)) + '</span>');
@@ -883,6 +905,7 @@
       // 配上 .act-btn 的浅灰会几乎看不见。
       tail = '<button class="act-btn" data-action="skip" title="跳过这一天">⏩</button>';
     }
+    tail = '<button class="act-btn" data-action="deadline" title="设置截止时间">⏳</button>' + tail;
 
     return '<li class="task ' + priCls + doneCls + '" data-id="' + t.id + '" data-kind="' + t.kind + '">' +
       '<button class="' + checkCls + '" data-action="toggle" title="标记完成/未完成"></button>' +
@@ -914,7 +937,10 @@
     ul.innerHTML = list.map(function (t) {
       var effTime = t.endTime || t.startTime;
       var overdue = allowOverdue && isToday && !t.completed && !!effTime && effTime < nowHM;
-      return taskCardHtml(t, overdue, mode);
+      // 截止时间：过去的日期一律算逾期；今天则比较时刻。待办池（没有日期）不判逾期。
+      var deadlineLate = allowOverdue && !t.completed && !!t.deadline &&
+                         (currentDate < todayStr() || (isToday && t.deadline < nowHM));
+      return taskCardHtml(t, overdue, mode, deadlineLate);
     }).join('');
   }
 
@@ -938,6 +964,7 @@
     else if (action === 'assign') openDateModal(id);
     else if (action === 'to-backlog') returnToBacklog(id);
     else if (action === 'skip') skipOccurrence(id, currentDate);
+    else if (action === 'deadline') openDeadlineModal(id, kind);
   }
 
   function onListDblClick(e) {
@@ -1073,6 +1100,7 @@
     var startTime = document.getElementById('startTimeInput').value || null;
     var endTime = document.getElementById('endTimeInput').value || null;
     if (startTime && endTime && endTime < startTime) { var tmp = startTime; startTime = endTime; endTime = tmp; }
+    var deadline = document.getElementById('deadlineInput').value || null;
     var duration = parseInt(document.getElementById('durationSelect').value, 10) || 0;
     // 有开始时间 + 时长但没填结束时间 → 由时长推算（输入框那边会实时同步，这里兜底）
     if (startTime && !endTime && duration > 0) endTime = addMinutes(startTime, duration);
@@ -1087,14 +1115,14 @@
     if (repeat === 'none') {
       state.tasks.push({
         id: 't' + (nextId++),
-        title: title, startTime: startTime, endTime: endTime, duration: duration || null,
+        title: title, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
         category: category, priority: priority,
         date: currentDate, completed: false, createdAt: Date.now()
       });
     } else {
       state.rules.push({
         id: 'r' + (nextId++),
-        title: title, startTime: startTime, endTime: endTime, duration: duration || null,
+        title: title, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
         category: category, priority: priority,
         repeat: repeat, startDate: currentDate, createdAt: Date.now()
       });
@@ -1103,6 +1131,7 @@
     titleInput.value = '';
     document.getElementById('startTimeInput').value = '';
     document.getElementById('endTimeInput').value = '';
+    document.getElementById('deadlineInput').value = '';
     document.getElementById('durationSelect').value = '0';
     document.getElementById('categoryInput').value = '';
     document.getElementById('repeatSelect').value = 'none';
@@ -1139,6 +1168,7 @@
     var startTime = document.getElementById('bStartTimeInput').value || null;
     var endTime = document.getElementById('bEndTimeInput').value || null;
     if (startTime && endTime && endTime < startTime) { var tmp = startTime; startTime = endTime; endTime = tmp; }
+    var deadline = document.getElementById('bDeadlineInput').value || null;
     var duration = parseInt(document.getElementById('bDurationSelect').value, 10) || 0;
     if (startTime && !endTime && duration > 0) endTime = addMinutes(startTime, duration);
     var category = document.getElementById('bCategoryInput').value.trim() || null;
@@ -1150,7 +1180,7 @@
 
     state.tasks.push({
       id: 't' + (nextId++),
-      title: title, startTime: startTime, endTime: endTime, duration: duration || null,
+      title: title, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
       category: category, priority: priority,
       date: null, completed: false, createdAt: Date.now()
     });
@@ -1158,6 +1188,7 @@
     titleInput.value = '';
     document.getElementById('bStartTimeInput').value = '';
     document.getElementById('bEndTimeInput').value = '';
+    document.getElementById('bDeadlineInput').value = '';
     document.getElementById('bDurationSelect').value = '0';
     document.getElementById('bCategoryInput').value = '';
     document.getElementById('bPrioritySelect').value = 'medium';
@@ -1331,6 +1362,61 @@
         else v = addDaysStr(today, (6 - dayOfWeek(today) + 7) % 7);   // 最近的周六；今天就是周六则为今天
         if (pendingAssignId) assignToDate(pendingAssignId, v);
       });
+    });
+  }
+
+  // ---------- 截止时间 ----------
+  var pendingDeadlineId = null;
+  var pendingDeadlineKind = null;
+
+  function findItem(id, kind) {
+    if (kind === 'once') return state.tasks.find(function (x) { return x.id === id; });
+    if (kind === 'recurring') return state.rules.find(function (x) { return x.id === id; });
+    return null;
+  }
+
+  function openDeadlineModal(id, kind) {
+    if (!validKind(kind)) return;
+    var it = findItem(id, kind);
+    if (!it) return;
+    pendingDeadlineId = id;
+    pendingDeadlineKind = kind;
+    document.getElementById('deadlineModalTask').textContent = it.title;
+    document.getElementById('deadlineModalInput').value = it.deadline || '';
+    document.getElementById('deadlineModal').classList.add('show');
+    document.getElementById('deadlineModalInput').focus();
+  }
+
+  function closeDeadlineModal() {
+    pendingDeadlineId = null;
+    pendingDeadlineKind = null;
+    document.getElementById('deadlineModal').classList.remove('show');
+  }
+
+  function saveDeadline() {
+    if (!pendingDeadlineId) return;
+    // 模态框开着时可能被 3 秒一次的 pullState 整体覆盖，保存前重新 find 一次
+    var it = findItem(pendingDeadlineId, pendingDeadlineKind);
+    var v = document.getElementById('deadlineModalInput').value || null;
+    if (it) {
+      it.deadline = v;
+      commit();
+      render();
+      showToast(v ? '✓ 截止时间已设为 ' + v : '✓ 已取消截止时间');
+    }
+    closeDeadlineModal();
+  }
+
+  function bindDeadlineModal() {
+    var modal = document.getElementById('deadlineModal');
+    document.getElementById('deadlineModalOk').addEventListener('click', saveDeadline);
+    document.getElementById('deadlineModalCancel').addEventListener('click', closeDeadlineModal);
+    modal.addEventListener('click', function (e) { if (e.target === modal) closeDeadlineModal(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && modal.classList.contains('show')) closeDeadlineModal();
+    });
+    document.getElementById('deadlineModalInput').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); saveDeadline(); }
     });
   }
 
@@ -1551,6 +1637,7 @@
   updateCategoryDatalist();
   bindDateModal();
   bindRepeatModal();
+  bindDeadlineModal();
   bindDurationHelper('startTimeInput', 'endTimeInput', 'durationSelect');
   bindDurationHelper('bStartTimeInput', 'bEndTimeInput', 'bDurationSelect');
   render();

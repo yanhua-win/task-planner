@@ -159,6 +159,7 @@
     color: var(--text);
   }
   .opts-row input[type="time"] { width: 88px; }
+  .opts-row input[type="datetime-local"] { width: 190px; }
   .opts-row input.cat { width: 96px; }
   .opts-row select { width: 96px; }
   .opts-row input:focus, .opts-row select:focus { border-color: var(--accent); }
@@ -457,6 +458,7 @@
     body { padding: 16px 12px 60px; }
     .add-row input[type="text"],
     .opts-row input[type="time"],
+    .opts-row input[type="datetime-local"],
     .opts-row input[type="text"].cat,
     .opts-row select { font-size: 16px; }
     .add-btn { padding: 0 16px; }
@@ -507,7 +509,7 @@
     <div class="opts-row">
       <span><label>⏰ 开始</label><input type="time" id="startTimeInput"></span>
       <span><label>结束</label><input type="time" id="endTimeInput"></span>
-      <span><label>⏳ 截止</label><input type="time" id="deadlineInput"></span>
+      <span><label>⏳ 截止</label><input type="datetime-local" id="deadlineInput"></span>
       <span><label>⏱ 时长</label>
         <select id="durationSelect">
           <option value="0" selected>不设</option>
@@ -567,7 +569,7 @@
       <div class="opts-row">
         <span><label>⏰ 开始</label><input type="time" id="bStartTimeInput"></span>
         <span><label>结束</label><input type="time" id="bEndTimeInput"></span>
-        <span><label>⏳ 截止</label><input type="time" id="bDeadlineInput"></span>
+        <span><label>⏳ 截止</label><input type="datetime-local" id="bDeadlineInput"></span>
         <span><label>⏱ 时长</label>
           <select id="bDurationSelect">
             <option value="0" selected>不设</option>
@@ -667,9 +669,9 @@
   <div class="modal">
     <h3>⏳ 设置截止时间</h3>
     <div class="sub" id="deadlineModalTask"></div>
-    <label>截止时间（当天，可留空）</label>
-    <input type="time" id="deadlineModalInput">
-    <div class="note">留空并保存 = 取消截止时间。重复任务会应用到每一次。</div>
+    <label>截止时间（含日期，可留空）</label>
+    <input type="datetime-local" id="deadlineModalInput">
+    <div class="note">留空并保存 = 取消截止时间。重复任务只取时刻，日期按每次出现的那天算。</div>
     <div class="btn-row">
       <button class="btn primary" id="deadlineModalOk">保存</button>
       <button class="btn ghost" id="deadlineModalCancel">取消</button>
@@ -727,6 +729,29 @@
     var h = min / 60;
     return (h % 1 === 0 ? h : Math.round(h * 10) / 10) + '小时';
   }
+  // 截止时间用 datetime-local 的 "YYYY-MM-DDTHH:MM"（本地时间）。
+  // 兼容上一版的纯时刻 "HH:MM"：按任务/规则所在日期补全。
+  function resolveDeadline(raw, fallbackDate) {
+    if (!raw) return null;
+    if (raw.indexOf('T') !== -1) return raw;
+    return fallbackDate ? fallbackDate + 'T' + raw : null;
+  }
+  // 重复任务只保留时刻，日期换成这一次出现的日期
+  function deadlineForOccurrence(raw, dateStr) {
+    if (!raw) return null;
+    var time = raw.indexOf('T') !== -1 ? raw.split('T')[1] : raw;
+    return dateStr + 'T' + time;
+  }
+  function formatDeadline(dt) {
+    var p = dt.split('T');
+    var d = parseDate(p[0]);
+    var label = isNaN(d.getTime()) ? p[0] : (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    return label + ' ' + (p[1] || '');
+  }
+  function isDeadlinePast(dt) {
+    var ts = new Date(dt).getTime();
+    return !isNaN(ts) && ts < Date.now();
+  }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -779,12 +804,12 @@
     var list = [];
     state.tasks.forEach(function (t) {
       // t.date 为 null 的是待办池条目，只认有日期的（显式写成两层，别让后来人改成模糊匹配）
-      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: t.deadline, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
+      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
     });
     state.rules.forEach(function (r) {
       if (occursOn(r, dateStr)) {
         var key = r.id + '_' + dateStr;
-        list.push({ id: r.id, title: r.title, startTime: r.startTime, endTime: r.endTime, duration: r.duration, deadline: r.deadline, category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
+        list.push({ id: r.id, title: r.title, startTime: r.startTime, endTime: r.endTime, duration: r.duration, deadline: deadlineForOccurrence(r.deadline, dateStr), category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
       }
     });
     list.sort(compareTasks);
@@ -798,7 +823,7 @@
       .filter(function (t) { return !t.date; })
       .map(function (t) {
         normalizeTask(t);
-        return { id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: t.deadline, category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
+        return { id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
       })
       .sort(function (a, b) {
         var pd = prioRank(a.priority) - prioRank(b.priority);
@@ -881,7 +906,7 @@
     }
     if (t.deadline) {
       meta.push('<span class="badge deadline' + (deadlineLate ? ' overdue' : '') + '">⏳ 截止 ' +
-        escapeHtml(t.deadline) + (deadlineLate ? ' · 已逾期' : '') + '</span>');
+        escapeHtml(formatDeadline(t.deadline)) + (deadlineLate ? ' · 已逾期' : '') + '</span>');
     }
     if (t.duration) {
       meta.push('<span class="badge duration">⏱ ' + escapeHtml(formatDuration(t.duration)) + '</span>');
@@ -937,9 +962,8 @@
     ul.innerHTML = list.map(function (t) {
       var effTime = t.endTime || t.startTime;
       var overdue = allowOverdue && isToday && !t.completed && !!effTime && effTime < nowHM;
-      // 截止时间：过去的日期一律算逾期；今天则比较时刻。待办池（没有日期）不判逾期。
-      var deadlineLate = allowOverdue && !t.completed && !!t.deadline &&
-                         (currentDate < todayStr() || (isToday && t.deadline < nowHM));
+      // 截止时间自带日期，直接和当前时刻比较；待办池里的任务同样适用。
+      var deadlineLate = !t.completed && !!t.deadline && isDeadlinePast(t.deadline);
       return taskCardHtml(t, overdue, mode, deadlineLate);
     }).join('');
   }
@@ -1382,7 +1406,11 @@
     pendingDeadlineId = id;
     pendingDeadlineKind = kind;
     document.getElementById('deadlineModalTask').textContent = it.title;
-    document.getElementById('deadlineModalInput').value = it.deadline || '';
+    // 重复任务在模态框里显示「今天 + 时刻」，实际生效日期按每次出现算
+    var modalValue = kind === 'recurring'
+      ? deadlineForOccurrence(it.deadline, currentDate)
+      : resolveDeadline(it.deadline, it.date || currentDate);
+    document.getElementById('deadlineModalInput').value = modalValue || '';
     document.getElementById('deadlineModal').classList.add('show');
     document.getElementById('deadlineModalInput').focus();
   }
@@ -1459,6 +1487,11 @@
     delete it.time;
     if (!it.priority) it.priority = 'medium';
     if (typeof it.createdAt !== 'number') it.createdAt = 0;
+    // 上一版的截止时间只有时刻，补上任务/规则所在的日期
+    if (it.deadline && it.deadline.indexOf('T') === -1) {
+      var base = it.date || it.startDate;
+      if (base) it.deadline = base + 'T' + it.deadline;
+    }
     return it;
   }
   function migrate(items) {

@@ -227,6 +227,19 @@
   .task-main { flex: 1; min-width: 0; }
   .task-title { font-size: 15px; word-break: break-word; cursor: text; }
   .task.done .task-title { text-decoration: line-through; color: var(--done); }
+  .task-notes {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 3px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .task.done .task-notes { opacity: .7; }
   .task-meta { display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
   .badge {
     font-size: 11px;
@@ -421,7 +434,9 @@
   .modal h3 { font-size: 17px; margin-bottom: 4px; }
   .modal .sub { font-size: 12px; color: var(--muted); margin-bottom: 16px; line-height: 1.6; }
   .modal label { display: block; font-size: 13px; margin: 12px 0 6px; color: var(--text); }
-  .modal input {
+  .modal input,
+  .modal textarea,
+  .modal select {
     width: 100%;
     border: 1px solid var(--line);
     border-radius: 10px;
@@ -429,8 +444,13 @@
     font-size: 14px;
     background: #fafbff;
     outline: none;
+    font-family: inherit;
+    color: var(--text);
   }
-  .modal input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .modal input:focus,
+  .modal textarea:focus,
+  .modal select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .modal textarea { resize: vertical; min-height: 64px; }
   .modal .note { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.6; }
   .modal .btn-row { display: flex; gap: 8px; margin-top: 18px; }
   .modal .btn {
@@ -453,6 +473,25 @@
   .modal .status.ok { color: #16a34a; }
   .modal .status.err { color: #dc2626; }
 
+  /* 添加表单的备注行 */
+  .notes-row { margin-top: 10px; }
+  .notes-row input {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 9px 14px;
+    font-size: 13px;
+    background: #fafbff;
+    outline: none;
+    transition: border .15s, box-shadow .15s;
+  }
+  .notes-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+  /* 编辑弹窗两列布局 */
+  .edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; margin-top: 12px; }
+  .edit-grid .field { min-width: 0; }
+  .edit-grid .field label { margin: 0 0 4px; }
+
   /* 移动端适配 */
   @media (max-width: 480px) {
     body { padding: 16px 12px 60px; }
@@ -467,6 +506,8 @@
     .date-label { min-width: 0; font-size: 16px; }
     .del-btn { visibility: visible; }
     .act-btn { width: 34px; height: 34px; font-size: 16px; }
+    .notes-row input { font-size: 16px; }
+    .edit-grid { grid-template-columns: 1fr; }
     .toast { bottom: 22px; }
   }
 </style>
@@ -542,6 +583,9 @@
         </select>
       </span>
     </div>
+    <div class="notes-row">
+      <input type="text" id="notesInput" maxlength="500" placeholder="📝 备注（可选）">
+    </div>
   </div>
 
   <div class="filter-row" id="filterRow"></div>
@@ -556,7 +600,7 @@
     <button class="clear-btn" id="clearBtn">清除已完成</button>
   </div>
 
-  <div class="hint">💾 数据自动保存在本地浏览器 · 双击任务标题可编辑 · 左侧颜色条表示重要度（红=高 黄=中 蓝=低）· ⏳ 设置截止时间 · 📥 退回待办池 · ⏩ 跳过重复任务的这一天</div>
+  <div class="hint">💾 数据自动保存在本地浏览器 · 双击任务标题可快速改名 · ✏️ 编辑全部字段和备注 · 左侧颜色条表示重要度（红=高 黄=中 蓝=低）· 📥 退回待办池 · ⏩ 跳过重复任务的这一天</div>
 
   </div><!-- /dayView -->
 
@@ -594,6 +638,9 @@
           <input type="text" class="cat" id="bCategoryInput" list="categoryPresets" placeholder="如：工作">
         </span>
       </div>
+      <div class="notes-row">
+        <input type="text" id="bNotesInput" maxlength="500" placeholder="📝 备注（可选）">
+      </div>
     </div>
 
     <ul class="task-list" id="backlogList"></ul>
@@ -606,7 +653,7 @@
       <button class="clear-btn" id="bClearBtn">清除已完成</button>
     </div>
 
-    <div class="hint">📥 待办池 · 点 📅 指定到某一天 · ⏳ 设置截止时间 · 双击标题可编辑</div>
+    <div class="hint">📥 待办池 · 点 📅 指定到某一天 · ✏️ 编辑全部字段和备注 · 双击标题可快速改名</div>
   </div><!-- /backlogView -->
 
   <!-- datalist 必须放在两个视图之外：日视图隐藏时，里面的 datalist 会失效 -->
@@ -665,17 +712,64 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="deadlineModal">
+<div class="modal-overlay" id="editModal">
   <div class="modal">
-    <h3>⏳ 设置截止时间</h3>
-    <div class="sub" id="deadlineModalTask"></div>
-    <label>截止时间（含日期，可留空）</label>
-    <input type="datetime-local" id="deadlineModalInput">
-    <div class="note">留空并保存 = 取消截止时间。重复任务只取时刻，日期按每次出现的那天算。</div>
-    <div class="btn-row">
-      <button class="btn primary" id="deadlineModalOk">保存</button>
-      <button class="btn ghost" id="deadlineModalCancel">取消</button>
+    <h3>✏️ 编辑任务</h3>
+    <div class="sub" id="editModalSub"></div>
+
+    <label>任务名</label>
+    <input type="text" id="editTitle" maxlength="100">
+
+    <label>备注</label>
+    <textarea id="editNotes" rows="3" maxlength="500" placeholder="补充说明、链接、步骤…"></textarea>
+
+    <label>日期</label>
+    <input type="date" id="editDate">
+    <div class="note" id="editDateNote" style="margin-top:4px;"></div>
+
+    <div class="edit-grid">
+      <div class="field"><label>开始时间</label><input type="time" id="editStartTime"></div>
+      <div class="field"><label>结束时间</label><input type="time" id="editEndTime"></div>
+      <div class="field"><label>时长</label>
+        <select id="editDuration">
+          <option value="0">不设</option>
+          <option value="15">15分钟</option>
+          <option value="30">30分钟</option>
+          <option value="45">45分钟</option>
+          <option value="60">1小时</option>
+          <option value="90">1.5小时</option>
+          <option value="120">2小时</option>
+          <option value="180">3小时</option>
+          <option value="240">4小时</option>
+        </select>
+      </div>
+      <div class="field"><label>截止时间</label><input type="datetime-local" id="editDeadline"></div>
+      <div class="field"><label>重要度</label>
+        <select id="editPriority">
+          <option value="high">高</option>
+          <option value="medium">中</option>
+          <option value="low">低</option>
+        </select>
+      </div>
+      <div class="field"><label>分类</label>
+        <input type="text" id="editCategory" list="categoryPresets" placeholder="如：工作">
+      </div>
+      <div class="field"><label>重复</label>
+        <select id="editRepeat">
+          <option value="none">不重复</option>
+          <option value="daily">每天</option>
+          <option value="weekly">每周</option>
+          <option value="monthly">每月</option>
+        </select>
+      </div>
     </div>
+    <div class="note" id="editRepeatNote"></div>
+
+    <div class="btn-row">
+      <button class="btn primary" id="editModalOk">保存</button>
+      <button class="btn ghost" id="editModalCancel">取消</button>
+    </div>
+    <div class="status" id="editModalStatus"></div>
   </div>
 </div>
 
@@ -804,12 +898,12 @@
     var list = [];
     state.tasks.forEach(function (t) {
       // t.date 为 null 的是待办池条目，只认有日期的（显式写成两层，别让后来人改成模糊匹配）
-      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
+      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, notes: t.notes, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
     });
     state.rules.forEach(function (r) {
       if (occursOn(r, dateStr)) {
         var key = r.id + '_' + dateStr;
-        list.push({ id: r.id, title: r.title, startTime: r.startTime, endTime: r.endTime, duration: r.duration, deadline: deadlineForOccurrence(r.deadline, dateStr), category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
+        list.push({ id: r.id, title: r.title, notes: r.notes, startTime: r.startTime, endTime: r.endTime, duration: r.duration, deadline: deadlineForOccurrence(r.deadline, dateStr), category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
       }
     });
     list.sort(compareTasks);
@@ -823,7 +917,7 @@
       .filter(function (t) { return !t.date; })
       .map(function (t) {
         normalizeTask(t);
-        return { id: t.id, title: t.title, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
+        return { id: t.id, title: t.title, notes: t.notes, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
       })
       .sort(function (a, b) {
         var pd = prioRank(a.priority) - prioRank(b.priority);
@@ -930,12 +1024,13 @@
       // 配上 .act-btn 的浅灰会几乎看不见。
       tail = '<button class="act-btn" data-action="skip" title="跳过这一天">⏩</button>';
     }
-    tail = '<button class="act-btn" data-action="deadline" title="设置截止时间">⏳</button>' + tail;
+    tail = '<button class="act-btn" data-action="edit-task" title="编辑任务">✏️</button>' + tail;
 
     return '<li class="task ' + priCls + doneCls + '" data-id="' + t.id + '" data-kind="' + t.kind + '">' +
       '<button class="' + checkCls + '" data-action="toggle" title="标记完成/未完成"></button>' +
       '<div class="task-main">' +
         '<div class="task-title" data-action="edit" title="双击编辑">' + escapeHtml(t.title) + '</div>' +
+        (t.notes ? '<div class="task-notes">' + escapeHtml(t.notes) + '</div>' : '') +
         (meta.length ? '<div class="task-meta">' + meta.join('') + '</div>' : '') +
       '</div>' +
       '<div class="row-actions">' + tail +
@@ -988,7 +1083,7 @@
     else if (action === 'assign') openDateModal(id);
     else if (action === 'to-backlog') returnToBacklog(id);
     else if (action === 'skip') skipOccurrence(id, currentDate);
-    else if (action === 'deadline') openDeadlineModal(id, kind);
+    else if (action === 'edit-task') openEditModal(id, kind);
   }
 
   function onListDblClick(e) {
@@ -1131,6 +1226,7 @@
     var category = document.getElementById('categoryInput').value.trim() || null;
     var priority = document.getElementById('prioritySelect').value || 'medium';
     var repeat = document.getElementById('repeatSelect').value;
+    var notes = document.getElementById('notesInput').value.trim() || null;
 
     if (category && state.categories.indexOf(category) === -1) {
       state.categories.push(category);
@@ -1139,14 +1235,14 @@
     if (repeat === 'none') {
       state.tasks.push({
         id: 't' + (nextId++),
-        title: title, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
+        title: title, notes: notes, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
         category: category, priority: priority,
         date: currentDate, completed: false, createdAt: Date.now()
       });
     } else {
       state.rules.push({
         id: 'r' + (nextId++),
-        title: title, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
+        title: title, notes: notes, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
         category: category, priority: priority,
         repeat: repeat, startDate: currentDate, createdAt: Date.now()
       });
@@ -1160,6 +1256,7 @@
     document.getElementById('categoryInput').value = '';
     document.getElementById('repeatSelect').value = 'none';
     document.getElementById('prioritySelect').value = 'medium';
+    document.getElementById('notesInput').value = '';
     titleInput.focus();
     updateCategoryDatalist();
     commit();
@@ -1197,6 +1294,7 @@
     if (startTime && !endTime && duration > 0) endTime = addMinutes(startTime, duration);
     var category = document.getElementById('bCategoryInput').value.trim() || null;
     var priority = document.getElementById('bPrioritySelect').value || 'medium';
+    var notes = document.getElementById('bNotesInput').value.trim() || null;
 
     if (category && state.categories.indexOf(category) === -1) {
       state.categories.push(category);
@@ -1204,7 +1302,7 @@
 
     state.tasks.push({
       id: 't' + (nextId++),
-      title: title, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
+      title: title, notes: notes, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
       category: category, priority: priority,
       date: null, completed: false, createdAt: Date.now()
     });
@@ -1216,6 +1314,7 @@
     document.getElementById('bDurationSelect').value = '0';
     document.getElementById('bCategoryInput').value = '';
     document.getElementById('bPrioritySelect').value = 'medium';
+    document.getElementById('bNotesInput').value = '';
     titleInput.focus();
     updateCategoryDatalist();
     commit();
@@ -1389,9 +1488,9 @@
     });
   }
 
-  // ---------- 截止时间 ----------
-  var pendingDeadlineId = null;
-  var pendingDeadlineKind = null;
+  // ---------- 编辑任务 ----------
+  var pendingEditId = null;
+  var pendingEditKind = null;
 
   function findItem(id, kind) {
     if (kind === 'once') return state.tasks.find(function (x) { return x.id === id; });
@@ -1399,52 +1498,166 @@
     return null;
   }
 
-  function openDeadlineModal(id, kind) {
+  function setEditStatus(msg, cls) {
+    var el = document.getElementById('editModalStatus');
+    el.textContent = msg || '';
+    el.className = 'status' + (cls ? ' ' + cls : '');
+  }
+
+  function openEditModal(id, kind) {
     if (!validKind(kind)) return;
     var it = findItem(id, kind);
     if (!it) return;
-    pendingDeadlineId = id;
-    pendingDeadlineKind = kind;
-    document.getElementById('deadlineModalTask').textContent = it.title;
-    // 重复任务在模态框里显示「今天 + 时刻」，实际生效日期按每次出现算
-    var modalValue = kind === 'recurring'
+    pendingEditId = id;
+    pendingEditKind = kind;
+
+    document.getElementById('editModalSub').textContent =
+      kind === 'recurring' ? '重复任务：修改会应用到每一次出现。' : '';
+    document.getElementById('editTitle').value = it.title || '';
+    document.getElementById('editNotes').value = it.notes || '';
+    document.getElementById('editStartTime').value = it.startTime || '';
+    document.getElementById('editEndTime').value = it.endTime || '';
+    document.getElementById('editDuration').value = it.duration ? String(it.duration) : '0';
+    document.getElementById('editPriority').value = it.priority || 'medium';
+    document.getElementById('editCategory').value = it.category || '';
+    document.getElementById('editRepeat').value = kind === 'recurring' ? (it.repeat || 'none') : 'none';
+
+    var baseDate = it.date || it.startDate || '';
+    document.getElementById('editDate').value = baseDate;
+    var dl = kind === 'recurring'
       ? deadlineForOccurrence(it.deadline, currentDate)
-      : resolveDeadline(it.deadline, it.date || currentDate);
-    document.getElementById('deadlineModalInput').value = modalValue || '';
-    document.getElementById('deadlineModal').classList.add('show');
-    document.getElementById('deadlineModalInput').focus();
+      : resolveDeadline(it.deadline, baseDate || currentDate);
+    document.getElementById('editDeadline').value = dl || '';
+
+    document.getElementById('editDateNote').textContent = kind === 'recurring'
+      ? '这是首次出现的日期；留空则保持不变。'
+      : '留空 = 放回待办池。';
+    document.getElementById('editRepeatNote').textContent = kind === 'recurring'
+      ? '改成「不重复」会把整条重复任务变成单次任务（历史完成记录会清空）。'
+      : '改成重复任务会从上面的日期开始按规则重复。';
+
+    setEditStatus('');
+    document.getElementById('editModal').classList.add('show');
+    document.getElementById('editTitle').focus();
   }
 
-  function closeDeadlineModal() {
-    pendingDeadlineId = null;
-    pendingDeadlineKind = null;
-    document.getElementById('deadlineModal').classList.remove('show');
+  function closeEditModal() {
+    pendingEditId = null;
+    pendingEditKind = null;
+    document.getElementById('editModal').classList.remove('show');
   }
 
-  function saveDeadline() {
-    if (!pendingDeadlineId) return;
+  // 从表单读出所有字段；结束时间缺失时按开始时间 + 时长推算
+  function readEditForm() {
+    var startTime = document.getElementById('editStartTime').value || null;
+    var endTime = document.getElementById('editEndTime').value || null;
+    if (startTime && endTime && endTime < startTime) { var tmp = startTime; startTime = endTime; endTime = tmp; }
+    var duration = parseInt(document.getElementById('editDuration').value, 10) || 0;
+    if (startTime && !endTime && duration > 0) endTime = addMinutes(startTime, duration);
+    return {
+      title: document.getElementById('editTitle').value.trim(),
+      notes: document.getElementById('editNotes').value.trim() || null,
+      startTime: startTime,
+      endTime: endTime,
+      duration: duration,
+      deadline: document.getElementById('editDeadline').value || null,
+      priority: document.getElementById('editPriority').value || 'medium',
+      category: document.getElementById('editCategory').value.trim() || null,
+      repeat: document.getElementById('editRepeat').value,
+      date: document.getElementById('editDate').value || null
+    };
+  }
+
+  function saveEdit() {
+    if (!pendingEditId) return;
     // 模态框开着时可能被 3 秒一次的 pullState 整体覆盖，保存前重新 find 一次
-    var it = findItem(pendingDeadlineId, pendingDeadlineKind);
-    var v = document.getElementById('deadlineModalInput').value || null;
-    if (it) {
-      it.deadline = v;
-      commit();
-      render();
-      showToast(v ? '✓ 截止时间已设为 ' + v : '✓ 已取消截止时间');
+    var kind = pendingEditKind;
+    var it = findItem(pendingEditId, kind);
+    if (!it) { closeEditModal(); return; }
+
+    var f = readEditForm();
+    if (!f.title) { setEditStatus('任务名不能为空', 'err'); return; }
+    if (f.date && !isValidDateStr(f.date)) { setEditStatus('日期格式不对', 'err'); return; }
+
+    if (kind === 'recurring' && !f.date) f.date = it.startDate || currentDate;
+    if (f.repeat !== 'none' && !f.date) f.date = currentDate;
+
+    if (f.category && state.categories.indexOf(f.category) === -1) {
+      state.categories.push(f.category);
     }
-    closeDeadlineModal();
+
+    if (kind === 'once') {
+      if (f.repeat === 'none') {
+        // 普通更新；日期留空 = 退回待办池
+        it.title = f.title;
+        it.notes = f.notes;
+        it.startTime = f.startTime;
+        it.endTime = f.endTime;
+        it.duration = f.duration || null;
+        it.deadline = f.deadline;
+        it.priority = f.priority;
+        it.category = f.category;
+        it.date = f.date;
+      } else {
+        // 单次 → 重复：删除任务，新建规则
+        var newRuleId = 'r' + (nextId++);
+        var startDate = f.date || it.date || currentDate;
+        state.tasks = state.tasks.filter(function (x) { return x.id !== it.id; });
+        state.rules.push({
+          id: newRuleId,
+          title: f.title, notes: f.notes, startTime: f.startTime, endTime: f.endTime,
+          deadline: f.deadline, duration: f.duration || null,
+          category: f.category, priority: f.priority,
+          repeat: f.repeat, startDate: startDate, createdAt: it.createdAt || Date.now()
+        });
+        if (it.completed) state.completions[newRuleId + '_' + startDate] = true;
+      }
+    } else {
+      if (f.repeat === 'none') {
+        // 重复 → 单次：落在所选日期，清掉历史完成记录
+        var taskDate = f.date || it.startDate || currentDate;
+        state.rules = state.rules.filter(function (x) { return x.id !== it.id; });
+        for (var k in state.completions) {
+          if (k.indexOf(it.id + '_') === 0) delete state.completions[k];
+        }
+        state.tasks.push({
+          id: 't' + (nextId++),
+          title: f.title, notes: f.notes, startTime: f.startTime, endTime: f.endTime,
+          deadline: f.deadline, duration: f.duration || null,
+          category: f.category, priority: f.priority,
+          date: taskDate, completed: false, createdAt: it.createdAt || Date.now()
+        });
+      } else {
+        it.title = f.title;
+        it.notes = f.notes;
+        it.startTime = f.startTime;
+        it.endTime = f.endTime;
+        it.duration = f.duration || null;
+        it.deadline = f.deadline;
+        it.priority = f.priority;
+        it.category = f.category;
+        it.repeat = f.repeat;
+        it.startDate = f.date;
+      }
+    }
+
+    updateCategoryDatalist();
+    commit();
+    render();
+    closeEditModal();
+    showToast('✓ 已保存');
   }
 
-  function bindDeadlineModal() {
-    var modal = document.getElementById('deadlineModal');
-    document.getElementById('deadlineModalOk').addEventListener('click', saveDeadline);
-    document.getElementById('deadlineModalCancel').addEventListener('click', closeDeadlineModal);
-    modal.addEventListener('click', function (e) { if (e.target === modal) closeDeadlineModal(); });
+  function bindEditModal() {
+    var modal = document.getElementById('editModal');
+    document.getElementById('editModalOk').addEventListener('click', saveEdit);
+    document.getElementById('editModalCancel').addEventListener('click', closeEditModal);
+    modal.addEventListener('click', function (e) { if (e.target === modal) closeEditModal(); });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && modal.classList.contains('show')) closeDeadlineModal();
+      if (e.key === 'Escape' && modal.classList.contains('show')) closeEditModal();
     });
-    document.getElementById('deadlineModalInput').addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); saveDeadline(); }
+    document.getElementById('editTitle').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); saveEdit(); }
     });
   }
 
@@ -1670,7 +1883,8 @@
   updateCategoryDatalist();
   bindDateModal();
   bindRepeatModal();
-  bindDeadlineModal();
+  bindEditModal();
+  bindDurationHelper('editStartTime', 'editEndTime', 'editDuration');
   bindDurationHelper('startTimeInput', 'endTimeInput', 'durationSelect');
   bindDurationHelper('bStartTimeInput', 'bEndTimeInput', 'bDurationSelect');
   render();

@@ -322,6 +322,7 @@
   .badge.cat { color: #fff; }
   .badge.repeat { background: #f0fdf4; color: #16a34a; }
   .badge.duration { background: #f5f3ff; color: #7c3aed; }
+  .badge.subtask-origin { background: #f5f3ff; color: #7c3aed; }
   .badge.repeat::before { content: "↻ "; }
   /* 优先级颜色条与徽章 */
   .task { border-left: 4px solid transparent; }
@@ -837,7 +838,7 @@
     <div class="note" id="editRepeatNote"></div>
 
     <label>子任务</label>
-    <div class="note" style="margin-top:0;">日期留空 = 未安排；填写日期后仍会保留在待办池，并标记为「已安排」。</div>
+    <div class="note" style="margin-top:0;">填写日期后仍会保留在待办池并标记「已安排」，同时在「每日任务」里生成一条对应任务；取消日期会删除那条任务。</div>
     <div id="subtaskEditList" class="subtask-edit-list"></div>
     <div class="subtask-add-row">
       <input type="text" id="subtaskNewInput" maxlength="100" placeholder="输入子任务后回车或点添加…">
@@ -990,7 +991,7 @@
     var list = [];
     state.tasks.forEach(function (t) {
       // t.date 为 null 的是待办池条目，只认有日期的（显式写成两层，别让后来人改成模糊匹配）
-      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, notes: t.notes, subtasks: t.subtasks, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
+      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, notes: t.notes, subtasks: t.subtasks, subtaskOf: t.subtaskOf, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
     });
     state.rules.forEach(function (r) {
       if (occursOn(r, dateStr)) {
@@ -1006,10 +1007,10 @@
   // 收集箱的心智是「新收进来的在最上面」，所以 createdAt 用降序。
   function getBacklogTasks() {
     return state.tasks
-      .filter(function (t) { return !t.date; })
+      .filter(function (t) { return !t.date && !t.subtaskOf; })
       .map(function (t) {
         normalizeTask(t);
-        return { id: t.id, title: t.title, notes: t.notes, subtasks: t.subtasks, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
+        return { id: t.id, title: t.title, notes: t.notes, subtasks: t.subtasks, subtaskOf: t.subtaskOf, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
       })
       .sort(function (a, b) {
         var pd = prioRank(a.priority) - prioRank(b.priority);
@@ -1097,6 +1098,9 @@
     if (t.duration) {
       meta.push('<span class="badge duration">⏱ ' + escapeHtml(formatDuration(t.duration)) + '</span>');
     }
+    if (t.subtaskOf) {
+      meta.push('<span class="badge subtask-origin">🧩 子任务</span>');
+    }
     meta.push('<span class="badge priority ' + (t.priority || 'medium') + '">' + PRI_LABEL[t.priority || 'medium'] + '</span>');
     if (t.category) {
       meta.push('<span class="badge cat" style="background:' + categoryColor(t.category) + '">' + escapeHtml(t.category) + '</span>');
@@ -1109,7 +1113,8 @@
     if (mode === 'backlog') {
       tail = '<button class="act-btn" data-action="assign" title="安排到某一天">📅</button>';
     } else if (t.kind === 'once') {
-      tail = '<button class="act-btn" data-action="to-backlog" title="退回待办池">📥</button>';
+      // 由子任务生成的每日任务不能单独退回待办池（它是子任务的映射）
+      tail = t.subtaskOf ? '' : '<button class="act-btn" data-action="to-backlog" title="退回待办池">📥</button>';
     } else {
       // 重复任务没有单一日期，不能退回待办池，但可以跳过这一天。
       // 图标必须用 U+23E9（默认彩色 emoji）—— U+23ED 的默认呈现是单色细线，
@@ -1228,8 +1233,95 @@
     var s = it.subtasks.find(function (x) { return x.id === subId; });
     if (!s) return;
     s.completed = !s.completed;
+    var linked = findLinkedTask(subId);
+    if (linked) linked.completed = s.completed;
     commit();
     render();
+  }
+
+  // ---------- 子任务 ↔ 每日任务联动 ----------
+  function findLinkedTask(subId) {
+    return state.tasks.find(function (t) { return t.subtaskOf && t.subtaskOf.subId === subId; });
+  }
+
+  function findParentOfSubtask(subId) {
+    var t = state.tasks.find(function (x) {
+      if (x.subtaskOf || !Array.isArray(x.subtasks)) return false;
+      return x.subtasks.some(function (s) { return s.id === subId; });
+    });
+    if (t) return { item: t, kind: 'once' };
+    var r = state.rules.find(function (x) {
+      return Array.isArray(x.subtasks) && x.subtasks.some(function (s) { return s.id === subId; });
+    });
+    if (r) return { item: r, kind: 'recurring' };
+    return null;
+  }
+
+  function createLinkedTask(parent, parentKind, sub) {
+    var linked = {
+      id: 't' + (nextId++),
+      title: sub.title,
+      notes: null,
+      subtasks: [],
+      startTime: null,
+      endTime: null,
+      duration: null,
+      deadline: null,
+      category: parent.category || null,
+      priority: parent.priority || 'medium',
+      date: sub.date,
+      completed: !!sub.completed,
+      createdAt: Date.now(),
+      subtaskOf: { parentId: parent.id, kind: parentKind, subId: sub.id }
+    };
+    state.tasks.push(linked);
+    return linked;
+  }
+
+  // 保存父任务时，按子任务的日期增删/更新每日任务
+  function syncSubtaskLinkedTasks(parent, parentKind, newSubs, oldSubs) {
+    var newIds = {};
+    newSubs.forEach(function (s) { newIds[s.id] = true; });
+
+    newSubs.forEach(function (s) {
+      var linked = findLinkedTask(s.id);
+      if (s.date) {
+        if (!linked) linked = createLinkedTask(parent, parentKind, s);
+        linked.title = s.title;
+        linked.date = s.date;
+        linked.completed = !!s.completed;
+        linked.subtaskOf.parentId = parent.id;
+        linked.subtaskOf.kind = parentKind;
+      } else if (linked) {
+        // 取消安排 → 删除对应的每日任务
+        state.tasks = state.tasks.filter(function (t) { return t !== linked; });
+      }
+    });
+
+    // 子任务被删除 → 对应每日任务也删除
+    (oldSubs || []).forEach(function (s) {
+      if (!newIds[s.id]) {
+        state.tasks = state.tasks.filter(function (t) {
+          return !(t.subtaskOf && t.subtaskOf.subId === s.id);
+        });
+      }
+    });
+  }
+
+  // 旧数据/云端拉取：给已安排但还没有每日任务的子任务补建
+  function ensureSubtaskLinks() {
+    state.tasks.slice().forEach(function (parent) {
+      if (parent.subtaskOf || !Array.isArray(parent.subtasks)) return;
+      parent.subtasks.forEach(function (s) {
+        if (s.date && !findLinkedTask(s.id)) createLinkedTask(parent, 'once', s);
+      });
+    });
+    state.rules.forEach(function (parent) {
+      if (!Array.isArray(parent.subtasks)) return;
+      parent.subtasks.forEach(function (s) {
+        if (s.date && !findLinkedTask(s.id)) createLinkedTask(parent, 'recurring', s);
+      });
+    });
   }
 
   function onListDblClick(e) {
@@ -1322,7 +1414,15 @@
     if (!validKind(kind)) return;
     if (kind === 'once') {
       var t = state.tasks.find(function (x) { return x.id === id; });
-      if (t) t.completed = !t.completed;
+      if (t) {
+        t.completed = !t.completed;
+        // 由子任务生成的每日任务：完成状态同步回子任务
+        if (t.subtaskOf) {
+          var parentRef = findParentOfSubtask(t.subtaskOf.subId);
+          var sub = parentRef && parentRef.item.subtasks.find(function (s) { return s.id === t.subtaskOf.subId; });
+          if (sub) sub.completed = t.completed;
+        }
+      }
     } else {
       var key = id + '_' + currentDate;
       state.completions[key] = !state.completions[key];
@@ -1334,8 +1434,31 @@
   function removeTask(id, kind) {
     if (!validKind(kind)) return;
     if (kind === 'once') {
-      state.tasks = state.tasks.filter(function (x) { return x.id !== id; });
+      var t = state.tasks.find(function (x) { return x.id === id; });
+      if (t && t.subtaskOf) {
+        // 删除的是子任务生成的每日任务 → 清除子任务的安排日期
+        var parentRef = findParentOfSubtask(t.subtaskOf.subId);
+        var sub = parentRef && parentRef.item.subtasks.find(function (s) { return s.id === t.subtaskOf.subId; });
+        if (sub) sub.date = null;
+      }
+      // 删除父任务时，连同其子任务生成的每日任务一起删除
+      var subIds = {};
+      if (t && Array.isArray(t.subtasks)) {
+        t.subtasks.forEach(function (s) { subIds[s.id] = true; });
+      }
+      state.tasks = state.tasks.filter(function (x) {
+        if (x.id === id) return false;
+        return !(x.subtaskOf && subIds[x.subtaskOf.subId]);
+      });
     } else {
+      var r = state.rules.find(function (x) { return x.id === id; });
+      var rSubIds = {};
+      if (r && Array.isArray(r.subtasks)) {
+        r.subtasks.forEach(function (s) { rSubIds[s.id] = true; });
+      }
+      state.tasks = state.tasks.filter(function (x) {
+        return !(x.subtaskOf && rSubIds[x.subtaskOf.subId]);
+      });
       state.rules = state.rules.filter(function (x) { return x.id !== id; });
       for (var k in state.completions) {
         if (k.indexOf(id + '_') === 0) delete state.completions[k];
@@ -1416,6 +1539,13 @@
   }
 
   function clearCompletedDay() {
+    // 清理已完成任务时，由子任务生成的每日任务要同步取消子任务的安排日期
+    state.tasks.forEach(function (t) {
+      if (t.date !== currentDate || !t.completed || !t.subtaskOf) return;
+      var parentRef = findParentOfSubtask(t.subtaskOf.subId);
+      var sub = parentRef && parentRef.item.subtasks.find(function (s) { return s.id === t.subtaskOf.subId; });
+      if (sub) sub.date = null;
+    });
     state.tasks = state.tasks.filter(function (t) { return !(t.date === currentDate && t.completed); });
     state.rules.forEach(function (r) {
       var key = r.id + '_' + currentDate;
@@ -1675,7 +1805,10 @@
     document.getElementById('editDuration').value = it.duration ? String(it.duration) : '0';
     document.getElementById('editPriority').value = it.priority || 'medium';
     document.getElementById('editCategory').value = it.category || '';
-    document.getElementById('editRepeat').value = kind === 'recurring' ? (it.repeat || 'none') : 'none';
+    var repeatSel = document.getElementById('editRepeat');
+    repeatSel.value = kind === 'recurring' ? (it.repeat || 'none') : 'none';
+    // 子任务生成的每日任务不能改成重复规则（否则会脱离子任务）
+    repeatSel.disabled = !!it.subtaskOf;
 
     var baseDate = it.date || it.startDate || '';
     document.getElementById('editDate').value = baseDate;
@@ -1687,9 +1820,16 @@
     document.getElementById('editDateNote').textContent = kind === 'recurring'
       ? '这是首次出现的日期；留空则保持不变。'
       : '留空 = 放回待办池。';
+    if (it.subtaskOf) {
+      document.getElementById('editDateNote').textContent = '清空日期 = 取消子任务的安排，并删除这条每日任务。';
+    }
     document.getElementById('editRepeatNote').textContent = kind === 'recurring'
       ? '改成「不重复」会把整条重复任务变成单次任务（历史完成记录会清空）。'
       : '改成重复任务会从上面的日期开始按规则重复。';
+    if (it.subtaskOf) {
+      document.getElementById('editRepeatNote').textContent =
+        '这是由子任务生成的每日任务；标题和日期会与子任务同步，清空日期会取消安排。';
+    }
 
     editSubtasks = (Array.isArray(it.subtasks) ? it.subtasks : []).map(function (s) {
       return { id: s.id || ('s' + (nextId++)), title: s.title || '', completed: !!s.completed, date: s.date || null };
@@ -1764,6 +1904,32 @@
     if (kind === 'recurring' && !f.date) f.date = it.startDate || currentDate;
     if (f.repeat !== 'none' && !f.date) f.date = currentDate;
 
+    // 记录保存前的子任务，用于对比增删
+    var oldSubs = (Array.isArray(it.subtasks) ? it.subtasks : []).map(function (s) {
+      return { id: s.id, title: s.title, date: s.date || null, completed: !!s.completed };
+    });
+
+    // 编辑的是「子任务生成的每日任务」→ 把标题/日期同步回子任务
+    if (it.subtaskOf) {
+      var parentRef = findParentOfSubtask(it.subtaskOf.subId);
+      var linkedSub = parentRef ? parentRef.item.subtasks.find(function (s) { return s.id === it.subtaskOf.subId; }) : null;
+      if (!linkedSub) {
+        it.subtaskOf = null;   // 父任务已不存在，退化成普通任务
+      } else {
+        linkedSub.title = f.title;
+        linkedSub.date = f.date;
+        if (!f.date) {
+          // 清空日期 = 取消该子任务的安排，同时删除这条每日任务
+          state.tasks = state.tasks.filter(function (x) { return x.id !== it.id; });
+          commit();
+          render();
+          closeEditModal();
+          showToast('✓ 已取消该子任务的安排');
+          return;
+        }
+      }
+    }
+
     // 去掉空行，并清理首尾空格
     var cleanSubs = editSubtasks
       .filter(function (s) { return s.title && s.title.trim(); })
@@ -1788,19 +1954,22 @@
         it.category = f.category;
         it.date = f.date;
         it.subtasks = cleanSubs;
+        syncSubtaskLinkedTasks(it, 'once', cleanSubs, oldSubs);
       } else {
         // 单次 → 重复：删除任务，新建规则
         var newRuleId = 'r' + (nextId++);
         var startDate = f.date || it.date || currentDate;
         state.tasks = state.tasks.filter(function (x) { return x.id !== it.id; });
-        state.rules.push({
+        var newRule = {
           id: newRuleId,
           title: f.title, notes: f.notes, subtasks: cleanSubs, startTime: f.startTime, endTime: f.endTime,
           deadline: f.deadline, duration: f.duration || null,
           category: f.category, priority: f.priority,
           repeat: f.repeat, startDate: startDate, createdAt: it.createdAt || Date.now()
-        });
+        };
+        state.rules.push(newRule);
         if (it.completed) state.completions[newRuleId + '_' + startDate] = true;
+        syncSubtaskLinkedTasks(newRule, 'recurring', cleanSubs, oldSubs);
       }
     } else {
       if (f.repeat === 'none') {
@@ -1810,13 +1979,15 @@
         for (var k in state.completions) {
           if (k.indexOf(it.id + '_') === 0) delete state.completions[k];
         }
-        state.tasks.push({
+        var newTask = {
           id: 't' + (nextId++),
           title: f.title, notes: f.notes, subtasks: cleanSubs, startTime: f.startTime, endTime: f.endTime,
           deadline: f.deadline, duration: f.duration || null,
           category: f.category, priority: f.priority,
           date: taskDate, completed: false, createdAt: it.createdAt || Date.now()
-        });
+        };
+        state.tasks.push(newTask);
+        syncSubtaskLinkedTasks(newTask, 'once', cleanSubs, oldSubs);
       } else {
         it.title = f.title;
         it.notes = f.notes;
@@ -1829,6 +2000,7 @@
         it.repeat = f.repeat;
         it.startDate = f.date;
         it.subtasks = cleanSubs;
+        syncSubtaskLinkedTasks(it, 'recurring', cleanSubs, oldSubs);
       }
     }
 
@@ -2054,6 +2226,7 @@
           state.rev = d.rev;
           migrate(state.tasks);
           migrate(state.rules);
+          ensureSubtaskLinks();
           save();
           updateCategoryDatalist();
           render();
@@ -2141,6 +2314,8 @@
 
   // ---------- 启动 ----------
   load();
+  ensureSubtaskLinks();
+  save();
   updateCategoryDatalist();
   bindDateModal();
   bindRepeatModal();

@@ -240,6 +240,74 @@
     overflow: hidden;
   }
   .task.done .task-notes { opacity: .7; }
+
+  /* 子任务 */
+  .subtask-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--accent);
+    cursor: pointer;
+    user-select: none;
+  }
+  .subtask-summary .chevron { display: inline-block; transition: transform .15s; }
+  .task.expanded .subtask-summary .chevron { transform: rotate(90deg); }
+  .subtask-list {
+    list-style: none;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--line);
+  }
+  .subtask { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; }
+  .subtask.assigned { background: #f6f8ff; border-radius: 8px; padding-left: 8px; padding-right: 8px; }
+  .subtask.assigned .sub-title { color: #3730a3; }
+  .sub-check {
+    width: 18px; height: 18px;
+    border: 2px solid #c6cbd8;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all .15s;
+  }
+  .sub-check:hover { border-color: var(--accent); }
+  .sub-check.on { background: var(--accent); border-color: var(--accent); }
+  .sub-check.on::after { content: "✓"; color: #fff; font-size: 11px; font-weight: 700; }
+  .sub-title { flex: 1; min-width: 0; word-break: break-word; }
+  .subtask.done .sub-title { text-decoration: line-through; color: var(--done); }
+  .sub-date {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: #dbe4ff;
+    color: #3730a3;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  /* 编辑弹窗里的子任务列表 */
+  .subtask-edit-list { margin-top: 6px; }
+  .subtask-edit-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .subtask-edit-row .st-title { flex: 1; min-width: 0; }
+  .subtask-edit-row .st-date { width: 140px; flex-shrink: 0; font-size: 12px; padding: 8px; }
+  .subtask-edit-row .st-del {
+    border: none;
+    background: #f3f4f8;
+    color: var(--muted);
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .subtask-edit-row .st-del:hover { background: #fdecec; color: var(--danger); }
+  .subtask-add-row { display: flex; gap: 6px; margin-top: 6px; }
+  .subtask-add-row input { flex: 1; }
+  .subtask-add-row .btn { flex: 0 0 auto; padding: 10px 16px; }
   .task-meta { display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
   .badge {
     font-size: 11px;
@@ -508,6 +576,9 @@
     .act-btn { width: 34px; height: 34px; font-size: 16px; }
     .notes-row input { font-size: 16px; }
     .edit-grid { grid-template-columns: 1fr; }
+    .subtask-edit-row { flex-wrap: wrap; }
+    .subtask-edit-row .st-title { flex: 1 1 100%; }
+    .subtask-edit-row .st-date { flex: 1; width: auto; }
     .toast { bottom: 22px; }
   }
 </style>
@@ -765,11 +836,31 @@
     </div>
     <div class="note" id="editRepeatNote"></div>
 
+    <label>子任务</label>
+    <div class="note" style="margin-top:0;">日期留空 = 未安排；填写日期后仍会保留在待办池，并标记为「已安排」。</div>
+    <div id="subtaskEditList" class="subtask-edit-list"></div>
+    <div class="subtask-add-row">
+      <input type="text" id="subtaskNewInput" maxlength="100" placeholder="输入子任务后回车或点添加…">
+      <button type="button" class="btn ghost" id="subtaskAddBtn">添加</button>
+    </div>
+
     <div class="btn-row">
       <button class="btn primary" id="editModalOk">保存</button>
       <button class="btn ghost" id="editModalCancel">取消</button>
     </div>
     <div class="status" id="editModalStatus"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="subtaskPrompt">
+  <div class="modal">
+    <h3>🧩 设置子任务？</h3>
+    <div class="sub" id="subtaskPromptTask"></div>
+    <div class="note">子任务可以分别勾选完成，也可以单独安排日期。安排后仍会保留在待办池，并标记为「已安排」。</div>
+    <div class="btn-row">
+      <button class="btn primary" id="subtaskPromptYes">设置子任务</button>
+      <button class="btn ghost" id="subtaskPromptNo">暂不</button>
+    </div>
   </div>
 </div>
 
@@ -796,6 +887,7 @@
   var nextId = Date.now();
   var activeTab = 'day';        // 'day' | 'backlog'
   var pendingAssignId = null;   // 日期模态框当前正在安排的任务 id
+  var expandedTasks = {};       // 展开了子任务的任务 id（仅本次会话）
 
   // ---------- 工具函数 ----------
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
@@ -898,12 +990,12 @@
     var list = [];
     state.tasks.forEach(function (t) {
       // t.date 为 null 的是待办池条目，只认有日期的（显式写成两层，别让后来人改成模糊匹配）
-      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, notes: t.notes, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
+      if (t.date && t.date === dateStr) list.push({ id: t.id, title: t.title, notes: t.notes, subtasks: t.subtasks, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: t.completed, createdAt: t.createdAt });
     });
     state.rules.forEach(function (r) {
       if (occursOn(r, dateStr)) {
         var key = r.id + '_' + dateStr;
-        list.push({ id: r.id, title: r.title, notes: r.notes, startTime: r.startTime, endTime: r.endTime, duration: r.duration, deadline: deadlineForOccurrence(r.deadline, dateStr), category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
+        list.push({ id: r.id, title: r.title, notes: r.notes, subtasks: r.subtasks, startTime: r.startTime, endTime: r.endTime, duration: r.duration, deadline: deadlineForOccurrence(r.deadline, dateStr), category: r.category, priority: r.priority || 'medium', repeat: r.repeat, kind: 'recurring', completed: !!state.completions[key], createdAt: r.createdAt });
       }
     });
     list.sort(compareTasks);
@@ -917,7 +1009,7 @@
       .filter(function (t) { return !t.date; })
       .map(function (t) {
         normalizeTask(t);
-        return { id: t.id, title: t.title, notes: t.notes, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
+        return { id: t.id, title: t.title, notes: t.notes, subtasks: t.subtasks, startTime: t.startTime, endTime: t.endTime, duration: t.duration, deadline: resolveDeadline(t.deadline, t.date), category: t.category, priority: t.priority || 'medium', repeat: 'none', kind: 'once', completed: !!t.completed, createdAt: t.createdAt };
       })
       .sort(function (a, b) {
         var pd = prioRank(a.priority) - prioRank(b.priority);
@@ -1026,12 +1118,36 @@
     }
     tail = '<button class="act-btn" data-action="edit-task" title="编辑任务">✏️</button>' + tail;
 
-    return '<li class="task ' + priCls + doneCls + '" data-id="' + t.id + '" data-kind="' + t.kind + '">' +
+    var subs = t.subtasks || [];
+    var expanded = !!expandedTasks[t.id];
+    var subHtml = '';
+    if (subs.length) {
+      var subDone = subs.filter(function (s) { return s.completed; }).length;
+      subHtml = '<div class="subtask-summary" data-action="toggle-subtasks" title="展开/收起子任务">' +
+        '<span class="chevron">▸</span> 🧩 子任务 ' + subDone + '/' + subs.length +
+        '</div>';
+      if (expanded) {
+        subHtml += '<ul class="subtask-list">' + subs.map(function (s) {
+          // 已安排（date 非空）的子任务用底色 + 日期徽章区分，未安排的保持素色
+          var assigned = !!s.date;
+          return '<li class="subtask' + (s.completed ? ' done' : '') + (assigned ? ' assigned' : ' unassigned') +
+              '" data-sub-id="' + escapeHtml(s.id) + '">' +
+            '<button class="sub-check' + (s.completed ? ' on' : '') + '" data-action="toggle-subtask" title="完成子任务"></button>' +
+            '<span class="sub-title">' + escapeHtml(s.title) + '</span>' +
+            (assigned ? '<span class="sub-date">📅 ' + escapeHtml(shortDate(s.date)) + ' 已安排</span>' : '') +
+          '</li>';
+        }).join('') + '</ul>';
+      }
+    }
+
+    return '<li class="task ' + priCls + doneCls + (subs.length ? ' has-subs' : '') + (expanded ? ' expanded' : '') +
+        '" data-id="' + t.id + '" data-kind="' + t.kind + '">' +
       '<button class="' + checkCls + '" data-action="toggle" title="标记完成/未完成"></button>' +
       '<div class="task-main">' +
         '<div class="task-title" data-action="edit" title="双击编辑">' + escapeHtml(t.title) + '</div>' +
         (t.notes ? '<div class="task-notes">' + escapeHtml(t.notes) + '</div>' : '') +
         (meta.length ? '<div class="task-meta">' + meta.join('') + '</div>' : '') +
+        subHtml +
       '</div>' +
       '<div class="row-actions">' + tail +
         '<button class="del-btn" data-action="delete" title="删除">✕</button>' +
@@ -1067,13 +1183,24 @@
   // 两个 <ul> 互不嵌套，各绑一次同一个具名函数不会互相干扰。
   // （危险的是绑到共同祖先上 —— 那样一次点击会跑两遍。）
   function onListClick(e) {
-    var el = e.target.closest('[data-action]');
-    if (!el) return;
-    var li = el.closest('.task');
+    var li = e.target.closest('.task');
     if (!li) return;
     var id = li.getAttribute('data-id');
     var kind = li.getAttribute('data-kind');
+    var el = e.target.closest('[data-action]');
+    if (!el) {
+      // 点任务正文（标题、子任务列表除外）= 展开/收起子任务
+      if (e.target.closest('.task-main') && !e.target.closest('.subtask-list')) toggleExpand(id, kind);
+      return;
+    }
     var action = el.getAttribute('data-action');
+    if (action === 'toggle-subtask') {
+      var subEl = el.closest('.subtask');
+      toggleSubtask(id, kind, subEl ? subEl.getAttribute('data-sub-id') : null);
+      return;
+    }
+    if (action === 'toggle-subtasks') { toggleExpand(id, kind); return; }
+
     if (action === 'toggle') toggleTask(id, kind);
     else if (action === 'delete') {
       // 重复任务删除前先问一句：只删这一天，还是整条规则都删掉
@@ -1084,6 +1211,25 @@
     else if (action === 'to-backlog') returnToBacklog(id);
     else if (action === 'skip') skipOccurrence(id, currentDate);
     else if (action === 'edit-task') openEditModal(id, kind);
+  }
+
+  // ---------- 子任务：展开 / 勾选 ----------
+  function toggleExpand(id, kind) {
+    var it = findItem(id, kind);
+    if (!it || !Array.isArray(it.subtasks) || !it.subtasks.length) return;
+    expandedTasks[id] = !expandedTasks[id];
+    render();
+  }
+
+  function toggleSubtask(id, kind, subId) {
+    if (!validKind(kind) || !subId) return;
+    var it = findItem(id, kind);
+    if (!it || !Array.isArray(it.subtasks)) return;
+    var s = it.subtasks.find(function (x) { return x.id === subId; });
+    if (!s) return;
+    s.completed = !s.completed;
+    commit();
+    render();
   }
 
   function onListDblClick(e) {
@@ -1232,16 +1378,21 @@
       state.categories.push(category);
     }
 
+    var newId, newKind;
     if (repeat === 'none') {
+      newId = 't' + (nextId++);
+      newKind = 'once';
       state.tasks.push({
-        id: 't' + (nextId++),
+        id: newId,
         title: title, notes: notes, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
         category: category, priority: priority,
         date: currentDate, completed: false, createdAt: Date.now()
       });
     } else {
+      newId = 'r' + (nextId++);
+      newKind = 'recurring';
       state.rules.push({
-        id: 'r' + (nextId++),
+        id: newId,
         title: title, notes: notes, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
         category: category, priority: priority,
         repeat: repeat, startDate: currentDate, createdAt: Date.now()
@@ -1261,6 +1412,7 @@
     updateCategoryDatalist();
     commit();
     render();
+    openSubtaskPrompt(newId, newKind, title);
   }
 
   function clearCompletedDay() {
@@ -1300,8 +1452,9 @@
       state.categories.push(category);
     }
 
+    var newId = 't' + (nextId++);
     state.tasks.push({
-      id: 't' + (nextId++),
+      id: newId,
       title: title, notes: notes, startTime: startTime, endTime: endTime, deadline: deadline, duration: duration || null,
       category: category, priority: priority,
       date: null, completed: false, createdAt: Date.now()
@@ -1319,6 +1472,7 @@
     updateCategoryDatalist();
     commit();
     render();
+    openSubtaskPrompt(newId, 'once', title);
   }
 
   // 日期字符串校验。不校验的话 parseDate 产出 NaN、toDateStr 得到 'NaN-NaN-NaN'，
@@ -1491,6 +1645,7 @@
   // ---------- 编辑任务 ----------
   var pendingEditId = null;
   var pendingEditKind = null;
+  var editSubtasks = [];
 
   function findItem(id, kind) {
     if (kind === 'once') return state.tasks.find(function (x) { return x.id === id; });
@@ -1536,14 +1691,41 @@
       ? '改成「不重复」会把整条重复任务变成单次任务（历史完成记录会清空）。'
       : '改成重复任务会从上面的日期开始按规则重复。';
 
+    editSubtasks = (Array.isArray(it.subtasks) ? it.subtasks : []).map(function (s) {
+      return { id: s.id || ('s' + (nextId++)), title: s.title || '', completed: !!s.completed, date: s.date || null };
+    });
+    renderEditSubtasks();
+
     setEditStatus('');
     document.getElementById('editModal').classList.add('show');
     document.getElementById('editTitle').focus();
   }
 
+  function renderEditSubtasks() {
+    var box = document.getElementById('subtaskEditList');
+    box.innerHTML = editSubtasks.map(function (s, i) {
+      return '<div class="subtask-edit-row" data-i="' + i + '">' +
+        '<input type="text" class="st-title" value="' + escapeHtml(s.title) + '" maxlength="100" placeholder="子任务内容">' +
+        '<input type="date" class="st-date" value="' + escapeHtml(s.date || '') + '" title="安排日期（可留空）">' +
+        '<button type="button" class="st-del" data-i="' + i + '" title="删除子任务">✕</button>' +
+      '</div>';
+    }).join('');
+  }
+
+  function addEditSubtask() {
+    var input = document.getElementById('subtaskNewInput');
+    var v = input.value.trim();
+    if (!v) { input.focus(); return; }
+    editSubtasks.push({ id: 's' + (nextId++), title: v, completed: false, date: null });
+    input.value = '';
+    renderEditSubtasks();
+    input.focus();
+  }
+
   function closeEditModal() {
     pendingEditId = null;
     pendingEditKind = null;
+    editSubtasks = [];
     document.getElementById('editModal').classList.remove('show');
   }
 
@@ -1582,6 +1764,13 @@
     if (kind === 'recurring' && !f.date) f.date = it.startDate || currentDate;
     if (f.repeat !== 'none' && !f.date) f.date = currentDate;
 
+    // 去掉空行，并清理首尾空格
+    var cleanSubs = editSubtasks
+      .filter(function (s) { return s.title && s.title.trim(); })
+      .map(function (s) {
+        return { id: s.id || ('s' + (nextId++)), title: s.title.trim(), completed: !!s.completed, date: s.date || null };
+      });
+
     if (f.category && state.categories.indexOf(f.category) === -1) {
       state.categories.push(f.category);
     }
@@ -1598,6 +1787,7 @@
         it.priority = f.priority;
         it.category = f.category;
         it.date = f.date;
+        it.subtasks = cleanSubs;
       } else {
         // 单次 → 重复：删除任务，新建规则
         var newRuleId = 'r' + (nextId++);
@@ -1605,7 +1795,7 @@
         state.tasks = state.tasks.filter(function (x) { return x.id !== it.id; });
         state.rules.push({
           id: newRuleId,
-          title: f.title, notes: f.notes, startTime: f.startTime, endTime: f.endTime,
+          title: f.title, notes: f.notes, subtasks: cleanSubs, startTime: f.startTime, endTime: f.endTime,
           deadline: f.deadline, duration: f.duration || null,
           category: f.category, priority: f.priority,
           repeat: f.repeat, startDate: startDate, createdAt: it.createdAt || Date.now()
@@ -1622,7 +1812,7 @@
         }
         state.tasks.push({
           id: 't' + (nextId++),
-          title: f.title, notes: f.notes, startTime: f.startTime, endTime: f.endTime,
+          title: f.title, notes: f.notes, subtasks: cleanSubs, startTime: f.startTime, endTime: f.endTime,
           deadline: f.deadline, duration: f.duration || null,
           category: f.category, priority: f.priority,
           date: taskDate, completed: false, createdAt: it.createdAt || Date.now()
@@ -1638,6 +1828,7 @@
         it.category = f.category;
         it.repeat = f.repeat;
         it.startDate = f.date;
+        it.subtasks = cleanSubs;
       }
     }
 
@@ -1658,6 +1849,68 @@
     });
     document.getElementById('editTitle').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); saveEdit(); }
+    });
+
+    // 子任务列表：改标题 / 改安排日期 / 删除
+    var stList = document.getElementById('subtaskEditList');
+    stList.addEventListener('input', function (e) {
+      var row = e.target.closest('[data-i]');
+      if (!row) return;
+      var i = +row.getAttribute('data-i');
+      if (!editSubtasks[i]) return;
+      if (e.target.classList.contains('st-title')) editSubtasks[i].title = e.target.value;
+      else if (e.target.classList.contains('st-date')) editSubtasks[i].date = e.target.value || null;
+    });
+    stList.addEventListener('click', function (e) {
+      var del = e.target.closest('.st-del');
+      if (!del) return;
+      var i = +del.getAttribute('data-i');
+      if (editSubtasks[i]) {
+        editSubtasks.splice(i, 1);
+        renderEditSubtasks();
+      }
+    });
+    document.getElementById('subtaskAddBtn').addEventListener('click', addEditSubtask);
+    document.getElementById('subtaskNewInput').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); addEditSubtask(); }
+    });
+  }
+
+  // ---------- 添加任务后的子任务确认 ----------
+  var pendingSubtaskPromptId = null;
+  var pendingSubtaskPromptKind = null;
+
+  function openSubtaskPrompt(id, kind, title) {
+    pendingSubtaskPromptId = id;
+    pendingSubtaskPromptKind = kind;
+    document.getElementById('subtaskPromptTask').textContent = '「' + title + '」';
+    document.getElementById('subtaskPrompt').classList.add('show');
+    document.getElementById('subtaskPromptYes').focus();
+  }
+
+  function closeSubtaskPrompt() {
+    pendingSubtaskPromptId = null;
+    pendingSubtaskPromptKind = null;
+    document.getElementById('subtaskPrompt').classList.remove('show');
+    // 焦点还给当前视图的添加输入框
+    var addInput = document.getElementById(activeTab === 'backlog' ? 'bTitleInput' : 'titleInput');
+    if (addInput) addInput.focus();
+  }
+
+  function bindSubtaskPrompt() {
+    var modal = document.getElementById('subtaskPrompt');
+    document.getElementById('subtaskPromptYes').addEventListener('click', function () {
+      var id = pendingSubtaskPromptId;
+      var kind = pendingSubtaskPromptKind;
+      closeSubtaskPrompt();
+      if (!id) return;
+      openEditModal(id, kind);
+      document.getElementById('subtaskNewInput').focus();
+    });
+    document.getElementById('subtaskPromptNo').addEventListener('click', closeSubtaskPrompt);
+    modal.addEventListener('click', function (e) { if (e.target === modal) closeSubtaskPrompt(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && modal.classList.contains('show')) closeSubtaskPrompt();
     });
   }
 
@@ -1705,6 +1958,14 @@
       var base = it.date || it.startDate;
       if (base) it.deadline = base + 'T' + it.deadline;
     }
+    // 子任务兜底：旧数据没有该字段；日期非法则当作未安排
+    if (!Array.isArray(it.subtasks)) it.subtasks = [];
+    it.subtasks = it.subtasks.filter(function (s) { return s && s.title; });
+    it.subtasks.forEach(function (s) {
+      if (!s.id) s.id = 's' + (nextId++);
+      s.completed = !!s.completed;
+      if (s.date && !isValidDateStr(s.date)) s.date = null;
+    });
     return it;
   }
   function migrate(items) {
@@ -1884,6 +2145,7 @@
   bindDateModal();
   bindRepeatModal();
   bindEditModal();
+  bindSubtaskPrompt();
   bindDurationHelper('editStartTime', 'editEndTime', 'editDuration');
   bindDurationHelper('startTimeInput', 'endTimeInput', 'durationSelect');
   bindDurationHelper('bStartTimeInput', 'bEndTimeInput', 'bDurationSelect');
